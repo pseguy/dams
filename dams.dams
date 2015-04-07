@@ -1,0 +1,7456 @@
+;
+; DAMS - An integrated Editor/Assembler/debugger for the Amstrad CPC.
+; Copyright (C) 1984-2015  Pascal Séguy  <pascal.seguy@laposte.net>
+;
+;
+;    DAMS is free software: you can redistribute it and/or modify
+;    it under the terms of the GNU General Public License as published by
+;    the Free Software Foundation, either version 3 of the License, or
+;    (at your option) any later version.
+;
+;    DAMS is distributed in the hope that it will be useful,
+;    but WITHOUT ANY WARRANTY; without even the implied warranty of
+;    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;    GNU General Public License for more details.
+;
+;    You should have received a copy of the GNU General Public License
+;    along with DAMS.  If not, see <http://www.gnu.org/licenses/>.
+;
+; Build notes: See the README file.
+;
+; File D1.BIN - Common routines and monitor.
+;
+
+	ORG	29000
+
+;
+; Mode flag
+; 1 => Developpement version, 2 => Release
+; Note: Only dev version is able to generate relocation table.
+VRS	EQU	1
+
+;
+; Constants
+;
+^	EQU	-1		; a shortcut for '255'
+|	EQU	128		; another shortcut to save few bytes in source file.
+
+
+;
+; Main entry point
+;
+DEP
+	DI			; We'll do untrivial things with SP
+	JR	WORK
+
+;
+; PC is 'program counter' and is a storage
+; buffer for CPU registers. see INIT2
+;
+PC
+	; dummy filled area (was "aglae et sidonie" in DAMS 1.0)
+	DEFM	Written by Pascal Seguy
+
+	; make PC a 24 bytes length storage zero padded whatever the
+	; DEFM above.
+	DEFS	24+PC-$,0
+
+STK2	DEFW			; The user's stack pointer
+STKP	DEFW			; Our SP backup
+LPC	DEFW			; The assembler 'virtual' write pointer.
+SPO	DEFW			; Screen write coordinates: low byte = columns, High byte = line. zero based.
+END	DEFW			; DAMS brk address. (fisrt address not used by DAMS)
+PTEXT	DEFW			; write pointer in source code
+PTWO	DEFW			; read pointer in source code
+CURPO	DEFB			; cursor position in current line (zero based)
+
+;
+; FLG0 bit field:
+;  0: Use the screen memory during assembly to save memory
+;  1: The 'generate code in memory' flag (after the symbol table).
+;  2: The 'print assembly listing' bit
+;  3: The 'generate code on disk' flag
+;  7: The 'generate relocation table' flag (hidden feature)
+FLG0	DEFB
+
+;
+; FLG1 bit field
+;	2: There's another file to assemble
+; 	6: used for conditionnal assembly
+FLG1	DEFB
+
+
+;
+; FLG2 bit field
+; 	(to be commented)
+FLG2	DEFB
+
+;
+; FLG3 bits field
+;
+;  0: Line edit mode flag
+;  1: Set during assembly phase
+;  2: Set when in trace mode
+;  3: Set in fast trace mode (command 'R')
+;  4: Don't display Z80 mnemonics flag
+;  5: 'Break point reached' flag
+;  6: bloc assembly mode (An,file or Fn,file)
+;  7: A display flag
+;
+FLG3	DEFB
+
+ENTP	DEFW			; Assembled program entry point
+BORG	DEFW			; Assembled program code address
+EDC	DEFW			; End of code to be unassembeld
+PILCA	DEFW			; arithmetic expression result.
+DEPL	DEFW			; a temporary var ?
+CHAN	DEFW			; The 'print character' function pointer
+VAR	DEFW			; The symbols table
+DFSZ	DEFB	25		; Screen window size in lines
+CFG	DEFB	142		; A bit field of flags
+CFGE	DEFB			; ? (comment me)
+RTOP	DEFW			; Stack top
+WORKH	DEFW			; A pointer to a function
+AJPR	DEFW			; JPRD address in (WORKH) area
+AXCR	DEFW			; EXECR address in (WORKH) area
+AXCZ	DEFW			; EXECZ address in (WORKH) area
+ASTK2	DEFW			; A pointer to the user's SP
+STOR	DEFW
+EDCSV	DEFW			; object code write pointer (at end after assembly)
+ENTSV	DEFW			; Object code entry point - Unused, should remove it
+HIMEM	DEFW	42620		; upper memory limit
+LPPO	DEFB
+NAMEAD	DEFW			; next file name (chained assembly)
+LOCAS	DEFW
+LTAB	DEFB			; an editor variable
+CTCH	DEFB
+BRKPT	DEFW			; The requested breakpoint address
+BRKCPY	DEFB	#01,#89,#7F	; buffer to hold the breakpoint targeted original code
+	DEFB
+
+;
+; Initial entry point.
+; Code here will be executed only once,
+; and this area will be used for any
+; storage later
+;
+WORK
+	PUSH	HL
+	PUSH	DE
+	PUSH	BC
+	PUSH	AF
+	CALL	15		; There's only a 'RET' at this address,
+				; that's what I expect, but this is unofficial
+				; and is a dangerous practice.
+RELCA
+	DEC	SP
+	DEC	SP
+	POP	HL		; HL holds RELCA runtime address
+	LD	BC,DEP-RELCA	; BC = relocation offset (negative)
+	ADD	HL,BC		; HL points to dams load address
+	LD	(HL),195	; Patch the entry point by a 'jump'
+	LD	B,H		; Save HL in BC
+	LD	C,L
+	LD	DE,TEXT-DEP	; DE = dams size (text+data without bss)
+	ADD	HL,DE
+	EX	DE,HL		; DE = points to end of dams
+	LD	H,B		; restore HL
+	LD	L,C
+RELGL1
+	PUSH	BC		; BC = dams load address
+	LD	A,(DE)		;
+	CP	^		; if pointed byte equals FF
+	JR	Z,RLGP5		; end of loop
+	LD	C,A		; BC = offset of next location
+	LD	B,0
+	INC	DE		; Increment relocation table read pointer
+	ADD	HL,BC		; HL points to the next location in code to relocate
+	POP	BC		; dams load address
+	PUSH	DE		; save relocation table read pointer
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = value of address to fix
+	ADD	HL,BC		;
+	EX	DE,HL		; DE = address fixed, HL = dams code pointer
+	LD	(HL),D
+	DEC	HL
+	LD	(HL),E		; put back in code the fixed address
+	INC	HL		; Increment the code pointer
+	INC	HL
+	POP	DE		; DE = relocation table read pointer
+	JR	RELGL1
+RLGP5
+	POP	AF
+	POP	BC
+	POP	DE
+	POP	HL
+	LD	(LPC),SP	; save amsdos SP (LPC used as a temporary var ?)
+	CALL	INITR		; save curent registers values
+	LD	HL,(LPC)
+	LD	(STK2),HL	; will be the user's stack
+	CALL	INITC1
+	;
+	; Init editor strings (search/replace)
+	;
+	LD	HL,STRG1	; string 1
+	LD	BC,13*256+32	; Cariage return and space
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	LD	HL,STRG2	; do it again for string2
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	LD	HL,STRG3	; init string 3
+	LD	(HL),B
+	JP	MONIT		; goto monitor (the shell)
+
+;
+; Init routine
+;
+INITC1
+	LD	DE,TEXT		; DE = end of DAMS code
+	LD	HL,2305		; floppy buffer size ?
+	ADD	HL,DE
+	EX	DE,HL		; DE = TEXT + 2305
+	LD	HL,(HIMEM)
+	SBC	HL,DE		; HL = amount of free memory after DAMS.
+	JP	C,A6
+	SRL	H		; Divide by 2
+	RR	L
+	ADD	HL,DE
+	LD	(WORKH),HL	; set our upper limit for source code
+
+	LD	DE,256		; stack size
+	ADD	HL,DE
+	LD	(RTOP),HL	; set stack top
+
+	CALL	STMODE		; set screen mode
+	CALL	NEW		; reset editor
+	LD	HL, ENTRY
+	LD	(DEP+1),HL	; Patch the start of DAMS with a jump to ENTRY
+	LD	DE,#C002
+	LD	A,130
+	CALL	KEEPA		; (comment me)
+	AND	A
+	RET	NZ
+	;
+	; Patch DAMS for CPC 464 specifics
+	; firmware addresses
+	;
+	LD	DE,TB464	; CPC 464 defs
+	LD	HL,TBA0		; Array of pointer to CPC dependent addresses
+INITL5
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC = location in DAMS code to fix for 464
+	INC	HL
+	LD	A,(DE)
+	INC	DE
+	LD	(BC),A
+	INC	BC
+	LD	A,(DE)
+	INC	DE
+	LD	(BC),A		; (BC) has been fixed
+	INC	(HL)
+	DEC	(HL)
+	JR	NZ,INITL5
+	LD	BC,0
+	JP	SWAP		; install a breakpoint at 0 and return
+
+TBA0				; array of addresses in DAMS to be fixed
+	DEFW	A3+1,A4+1,A5+1,A6+1
+	DEFB
+TB464				; CPC 464 specific addresses
+	DEFW	#1BB7
+	DEFW	#1B5C
+	DEFW	#B4E8		; amsdos sysvar: caps lock flag
+	DEFW	#C064
+				; End of tab marker
+	DEFM	^^^^
+
+;
+FM	EQU	80
+LW	EQU	FM*2-2
+
+WORKZ	EQU	WORK+FM+5	; A transient stack top, and a buffer
+
+;
+; Pad with 0, an LW+48 area length
+; starting at WORK.
+; This area contains startup time code
+; that will be reaffected after startup
+;
+	DEFS	LW+48+WORK-$,0
+
+;
+; Allocate the editor search strings
+; in these previous area
+;
+STRG1	EQU	$-48
+STRG2	EQU	$-32
+STRG3	EQU	$-16
+
+;
+; Define various offsets for
+; variable, relative to PC
+;
+F0	EQU	FLG0-PC
+F1	EQU	FLG1-PC
+F2	EQU	FLG2-PC
+F3	EQU	FLG3-PC
+FZ	EQU	DFSZ-PC		; Screen window size in lines
+FS	EQU	STOR-PC
+CN	EQU	SPO-PC		; screen write pos column.
+LN	EQU	CN+1		; screen write pos line.
+CP	EQU	CURPO-PC	; cursor position
+CH	EQU	CTCH-PC
+;
+;
+	DEFS	1,"^"
+
+;
+; Jump to BC
+;
+JPBC
+	PUSH	BC
+	RET
+
+;
+; Jump to DE with an EXX
+;
+JPDE
+	PUSH	DE
+	EXX
+	RET
+
+;
+; Jump (HL)
+;
+JRHL
+	JP	(HL)
+
+;
+; Used by inkey
+;
+JPR
+	LD	DE,JPRA
+	LD	HL,(AJPR)
+	PUSH	IX
+	PUSH	DE
+	PUSH	HL
+	PUSH	BC
+	LD	A,(CFG)
+	AND	243
+	LD	C,A
+	LD	B,#7F
+	DEC	HL
+	DEC	HL
+	DEC	HL
+	JP	(HL)		; Jump to KEEPR1 in (WORKH) area
+
+JPRA
+	DI
+	POP	IX
+	LD	C,(IX+CFG-PC)
+	SET	2,C
+	SET	3,C
+	OUT	(C),C
+	RET
+
+;
+; Prepare an amsdos call
+; clear flags
+;
+EXT
+	DI
+	EXX
+	EX	AF,AF
+	LD	BC,#7F8E	; ???
+	OR	A
+	EX	AF,AF
+	EXX
+	EI
+	RET
+
+;
+; Do KEEP with HL as pointer
+;
+KEEPH
+	EX	DE,HL
+	CALL	KEEP
+	EX	DE,HL
+	RET
+
+;
+; Fetch byte pointed by DE
+; thru the memory manager
+; (I can't remember anything of
+; CPC specific platform)
+;
+KEEP
+	LD	A,(CFG)		; may contain rom or ram selector ?
+	BIT	3,A
+	JR	Z,KEEPP5
+KEEPA
+	PUSH	BC
+	PUSH	HL
+	LD	C,(IX+CFG-PC)
+	SET	2,C
+	SET	3,C
+	LD	B,#7F
+	LD	HL,(WORKH)
+	CALL	JRHL		; call deported KEEPR
+	POP	HL
+	POP	BC
+	RET
+KEEPP5
+	PUSH	BC
+	LD	A,(CFGE)
+	LD	BC,#DF00
+	OUT	(C),A
+	LD	A,(CFG)
+	CALL	KEEPA
+	OUT	(C),C
+	POP	BC
+	RET
+
+;
+; Install the deported stub
+;
+RSTHC
+	LD	HL,KEEPR	; Read pointer on KEEPR function
+	LD	DE,(WORKH)	; DE = destination address
+	PUSH	DE
+	LD	BC, EXRF-KEEPR	; BC = length of KEEPR routine
+	LDIR			; copy KEEPR until EXRF to (WORKH)
+	POP	HL		; HL = (WORKH)
+	LD	DE,JPRD-KEEPR
+	ADD	HL,DE
+	LD	(AJPR),HL	; AJPR = JPRD address in (WORKH) area
+	LD	DE,EXECR-JPRD
+	ADD	HL,DE
+	LD	(AXCR),HL	; AXCR = EXECR address in (WORKH) area
+	LD	DE,EXECZ-EXECR
+	ADD	HL,DE
+	LD	(AXCZ),HL	; AXCZ = EXECZ address in (WORKH) area
+	LD	DE,6
+	ADD	HL,DE		; HL = AXCZ + 6, DE = 6
+	EX	DE,HL		; DE = AXCZ + 6,
+	LD	HL,EXRF-EXECZ-6	; HL = sizeof end of stub
+	ADD	HL,DE		; HL = end of stub
+	LD	(ASTK2),HL	; ASTK2 = EXRF address in deported stub
+	;
+	; Patch the:
+	;		LD (0), SP
+	; in the deported stub.
+	; Replace the '0' by ASTK2.
+	;
+	EX	DE,HL		; DE = end of stub, HL = AXCZ + 6
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	RET
+
+;
+; This code is copied to (WORKH) by RSTHC
+;
+KEEPR
+	OUT	(C),A
+	LD	A,(DE)
+KEEPR1	OUT	(C),C
+	RET
+JPRD
+	LD	BC,#7F8E
+	JR	KEEPR1
+
+;
+; Trace launcher stub (template)
+;
+; This code is copied outside DAMS area
+; and the deported 'EXECZ' area is patched
+; as needed for context switchs operations
+; between DAMS and user's code.
+; Called by EXECT2
+;
+EXECR
+	POP	HL		; pop return address
+	EX	(SP),HL		; restore user's HL value, and return address.
+	PUSH	AF		; save user's AF and BC registers
+	PUSH	BC
+	LD	B,#7F
+	LD	A,(CFG)
+	OUT	(C),A		; set user's memory map ? (comment me)
+	POP	BC
+	POP	AF
+	LD	SP,0		; restore user's SP (template here)
+EXECZ	DEFW	0,0		; a 'CALL nn' place holder
+	LD	(0),SP		; save user's SP  (template here)
+	LD	SP,0		; restore DAMS SP  (template here)
+	PUSH	BC		; save user's AF and BC registers
+	PUSH	AF
+	LD	BC,#7F8E
+	OUT	(C),C
+	LD	A,(CFG)
+	OR	140
+	OUT	(C),A		; restore DAMS memory map? (comment me)
+	POP	AF
+	POP	BC
+	RET
+EXRF				; end of trace stub
+
+;
+; Check upper memory limit
+; HL = pointer
+;
+TSHM
+	PUSH	DE
+	EX	DE,HL
+	LD	HL,(HIMEM)
+	SBC	HL,DE
+	EX	DE,HL
+	POP	DE
+	RET
+
+;
+; Setup screen memory address
+;
+FIXSC
+	RES	0,(IX+CFG-PC)
+	SET	1,(IX+CFG-PC)
+	LD	BC,#BC0C
+	OUT	(C),C
+	LD	A,48
+	INC	B
+	OUT	(C),A
+	DEC	B
+	INC	C
+	OUT	(C),C
+	INC	B
+	XOR	A
+	OUT	(C),A
+	RET
+
+;
+; Clear screen
+;
+CLSCR
+	EXX
+	CALL	FIXSC
+	LD	HL,256
+	LD	(IX+LPPO-PC),L	; clear LPPO
+	LD	(SPO),HL	; Screen write coordinates
+	LD	HL,#C000	; base screen
+	LD	DE,#C001
+	LD	(HL),L		; clear first byte
+	LD	BC,16383	; length
+	LDIR			; copy zeros
+	EXX
+	RET
+CLS
+	CALL	CLSCR
+
+;
+; Dispay the top status bar
+;
+AFMODE
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	LD	HL,(SPO)	; Screen write coordinates
+	PUSH	HL
+	LD	HL,45
+	LD	(SPO),HL	; Screen write coordinates
+	BIT	7,(IX+F2)
+	JR	Z,AFMDP31
+	CALL	PRTL
+	DEFM	Printer
+	DEFB	^		; eol
+	JR	AFMDP3
+AFMDP31	BIT	3,(IX+F2)
+	JR	Z,AFMDP3
+	CALL	PRTL
+	DEFM	File
+	DEFB	^		; eol
+AFMDP3
+	LD	C,54
+	CALL	TAB
+	LD	A,"L
+	CALL	OC
+	BIT	2,(IX+CFG-PC)
+	LD	A,18
+	JR	Z,AFMDP5
+	INC	A
+AFMDP5	CALL	POMSG
+;
+	LD	(IX+CN),60	; screen write pos column
+	BIT	3,(IX+CFG-PC)
+	LD	A,19
+	JR	Z,AFMDP6
+	LD	A,"U
+	CALL	OC
+	LD	A,19
+	CALL	POMSG
+	JR	AFMDP7
+AFMDP6	CALL	PRTL
+	DEFM	EXT:
+	DEFB	^		; eol
+	LD	E,(IX+CFGE-PC)
+	CALL	ONB12
+AFMDP7
+	LD	C,69
+	CALL	TAB
+	LD	A,13
+	BIT	0,(IX+F2)
+	JR	Z,AFMODEP1
+	INC	A
+AFMODEP1	CALL	POMSG
+;
+	LD	(IX+CN),75	; screen write pos column
+A5	LD	A,(#B632)
+	INC	A
+	LD	A,15
+	JR	Z,AFMODEP2
+	INC	A
+AFMODEP2	CALL	POMSG
+	POP	HL
+	LD	(SPO),HL	; Screen write coordinates
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+;
+; Scroll down the sceen
+;
+SCROLD
+	LD	B,24
+	LD	HL,50992
+	LD	DE,51072
+SCRDL1
+	PUSH	BC
+	PUSH	HL
+	PUSH	DE
+	CALL	SETLIN
+	POP	HL
+	LD	BC,-80
+	ADD	HL,BC
+	EX	DE,HL
+	POP	HL
+	ADD	HL,BC
+	POP	BC
+	DEC	B
+	LD	A,B
+	CP	C
+	JR	NZ,SCRDL1
+	JR	EFLIN
+
+;
+; Scroll the screen up
+;
+SCROLU
+	LD	B,1
+	LD	C,(IX+FZ)	; Screen window size in lines
+	DEC	C
+	LD	HL,49312
+	LD	DE,49232
+SCRUL1
+	PUSH	BC
+	PUSH	HL
+	PUSH	DE
+	CALL	SETLIN
+	POP	HL
+	LD	BC,80
+	ADD	HL,BC
+	EX	DE,HL
+	POP	HL
+	ADD	HL,BC
+	POP	BC
+	INC	B
+	LD	A,C
+	CP	B
+	JR	NZ,SCRUL1
+
+;
+; Erase a screen line
+;
+EFLIN
+	LD	C,0
+	CALL	SCADR
+	LD	C,79
+EFLINP1	LD	B,0
+	LD	A,8
+EFLL1
+	PUSH	AF
+	PUSH	BC
+	PUSH	HL
+	LD	D,H
+	LD	E,L
+	INC	DE
+	LD	(HL),B
+	LDIR
+	POP	HL
+	LD	A,H
+	ADD	A,8
+	LD	H,A
+	POP	BC
+	POP	AF
+	DEC	A
+	JR	NZ,EFLL1
+	RET
+;
+EFLIN1
+	CALL	SCADR
+	LD	A,79
+	SUB	C
+	RET	Z
+	LD	C,A
+	JR	EFLINP1
+
+;
+; Fill a screen line ?
+;
+SETLIN
+	LD	B,8
+SETLL1
+	PUSH	BC
+	PUSH	HL
+	PUSH	DE
+	LD	BC,80
+	LDIR
+	POP	DE
+	POP	HL
+	LD	A,H
+	ADD	A,8
+	LD	H,A
+	LD	A,D
+	ADD	A,8
+	LD	D,A
+	POP	BC
+	DJNZ	SETLL1
+	RET
+
+;
+; Compute screen address
+;
+; ENtry;
+; B : line number 0 based;
+; C ; collumn number 0 based
+;
+; Returns:
+;	screen absolute address in HL.
+;
+SCADR
+	LD	L,B		; copy the line number to L
+	LD	E,B		; also in E
+	LD	H,0		; Reset H
+	LD	D,H		; Reset D
+	ADD	HL,HL		; *2
+	ADD	HL,HL		; *4
+	ADD	HL,DE		; *5
+	ADD	HL,HL		; *10
+	ADD	HL,HL		; *20
+	ADD	HL,HL		; *40
+	ADD	HL,HL		; *80
+	LD	B,#C0		; Screen base address (high byte)
+	ADD	HL,BC		; Hl Holds the scree address
+	RET
+
+;
+; Set screen mode
+;
+STMODE
+	CALL	EXT
+	LD	A,2
+	CALL	#BC0E		; SCR set mode
+	DI
+	RET
+
+;
+; Print a line
+; Lines begins at return address and are terminated by 255
+; End of line location is the return address
+;
+PRTL
+	POP	BC		; fetch return address
+	LD	A,(BC)		; peek next char
+	INC	BC		; increment read pointer
+	PUSH	BC		; save read pointer (or return address if last byte of string)
+	CP	^		; End of string ?
+	RET	Z		; return to caller
+	CALL	OC		; Output one character
+	JR	PRTL		; loop again
+
+;
+; Print spaces
+;
+SPCS
+	PUSH	BC
+	LD	B,A
+SPCSL1	LD	A,32
+	CALL	OC		; Output char
+	DJNZ	SPCSL1
+	POP	BC
+	RET
+
+;
+; Output a 'cariage return'
+;
+ORT	LD	A,13
+	JR	OC
+
+
+;
+; Output a TAB
+;
+TAB
+	LD	A,9
+	CALL	OC
+	LD	A,C
+
+;
+; Output character
+; Print one caracter
+;
+OC
+	EXX			; back to amdos registers set
+	LD	DE,OCPF
+	PUSH	DE
+	LD	BC,(SPO)	; Screen write coordinates
+	BIT	6,(IX+F2)
+	JR	NZ,TBCT
+	CP	13
+	JR	C,OCCT
+	CP	|		; is high bit set ?
+	CALL	NC,PMOT
+SCHAN				; Output char (lower level)
+	LD	HL,(CHAN)
+	JP	(HL)
+OCPF
+	EXX
+	RET
+;
+OCCT
+	CP	9
+	JR	Z,TBSET
+	CP	6
+	RET	NZ
+;
+VIRGUL
+	LD	HL,TBVIRG
+VIRGL1	LD	A,(HL)
+	CP	C
+	JR	NC,VIRGP1
+	INC	HL
+	JR	VIRGL1
+VIRGP1	RES	7,A
+;
+TBCT
+	RES	6,(IX+F2)
+TBCTL1	PUSH	AF
+	LD	A,32
+	CALL	SCHAN		; Output char (lower level)
+	POP	AF
+	CP	C
+	CALL	C,TBCTP1
+	JR	NZ,TBCTL1
+	RET
+TBCTP1	LD	HL,(CHAN)
+	LD	DE,PRTWO
+	AND	A
+	SBC	HL,DE
+	RET	NZ
+	POP	AF
+	RET
+;
+TBVIRG	DEFB	19,39,59,|
+;
+TBSET
+	SET	6,(IX+F2)
+	RET
+
+;
+; Print a Z80 mnemonic
+;
+PMOT
+	BIT	4,(IX+F3)
+	RET	NZ
+	RES	7,A
+	LD	HL,TBMN
+	CALL	FDTB
+PMTL1
+	LD	A,(HL)
+	INC	HL
+	CP	|		; end of word ?
+	RES	7,A		; clear eow marker
+	RET	NC
+	PUSH	HL
+	CALL	SCHAN		; Output char (lower level)
+	POP	HL
+	JR	PMTL1
+
+;
+; Output a character to a file
+; append a line feed to CR
+;
+OUTCHAR
+	INC	C
+	CP	13
+	JR	NZ,OUTCHP1
+	CALL	OUTCHP1
+	LD	A,10
+	LD	C,0
+OUTCHP1
+	LD	(IX+CN),C	; screen write pos column
+	PUSH	BC
+	EXX
+	EX	AF,AF
+	PUSH	AF
+	EX	AF,AF
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	PUSH	IX
+	CALL	EXT
+	CALL	#BC95		; File out char
+	DI
+	JP	Z,ERR7
+	POP	IX
+	POP	HL
+	POP	DE
+	POP	BC
+	POP	AF
+	EX	AF,AF
+	EXX
+	POP	BC
+	RET
+;
+PRTWO
+	LD	HL,WORK
+	LD	B,0
+	ADD	HL,BC
+	LD	(HL),A
+	INC	HL
+	LD	(HL),B
+	INC	C
+	LD	(IX+CN),C	; screen write pos column
+	RET
+;
+LPRT
+	LD	B,(IX+LPPO-PC)
+	INC	B
+	DEC	B
+	CALL	Z,LPDBP
+	CP	13
+	JR	Z,LPENTR
+	CALL	SENDPR
+	INC	C
+	LD	A,C
+	CP	80
+	JR	C,LPSTPO
+LPENTR
+	LD	C,0
+	CALL	SENDPR
+	LD	A,10
+	CALL	SENDPR
+	INC	B
+	CALL	LPTSSP
+	PUSH	BC
+	CALL	BREAK
+	POP	BC
+	JP	Z,ERR10
+LPSTPO
+	LD	(IX+LPPO-PC),B
+	LD	(IX+CN),C	; screen write pos column
+	RET
+LPDBP
+	PUSH	AF
+	LD	B,DEBP
+	CALL	LPLFL1
+	LD	B,DEBP
+	POP	AF
+	RET
+LPTSSP
+	LD	A,B
+	CP	LPTEX+DEBP
+	RET	C
+	LD	B,72-LPTEX-DEBP
+LPLFL1
+	LD	A,10
+	CALL	SENDPR
+	DJNZ	LPLFL1
+	LD	C,B
+	RET
+;
+DEBP	EQU	3
+LPTEX	EQU	64
+;
+SENDPR
+	EX	AF,AF
+	PUSH	AF
+	EX	AF,AF
+	PUSH	BC
+	EXX
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	CALL	EXT
+	LD	B,15
+	LD	C,A
+SENDPRL1
+	CALL	#BD2B
+	JR	C,SENDPRP2
+	LD	A,C
+	DJNZ	SENDPRL1
+	JP	ERR7
+SENDPRP2
+	DI
+	POP	HL
+	POP	DE
+	POP	BC
+	EXX
+	POP	BC
+	POP	AF
+	EX	AF,AF
+	RET
+;
+SCPRT
+	CP	13
+	JR	Z,TB0
+	PUSH	AF
+	LD	A,B
+	CP	(IX+FZ)		; Screen window size in lines
+	JR	C,PRTCP1
+	CALL	SCROLU
+	LD	B,(IX+FZ)	; Screen window size in lines
+	DEC	B
+	LD	C,0
+PRTCP1
+	POP	AF
+	PUSH	BC
+	LD	DE,#3800
+	LD	L,A
+	LD	H,E
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,DE
+	PUSH	HL
+	CALL	SCADR
+	POP	DE
+	LD	BC,8*256+130
+PIXLO
+	LD	A,C
+	CALL	KEEPA
+	LD	(HL),A
+	INC	E
+	LD	A,H
+	ADD	A,8
+	LD	H,A
+	DJNZ	PIXLO
+	POP	BC
+	INC	C
+	LD	A,C
+	CP	FM
+	JR	NC,ENTR
+SCSTPO	LD	(SPO),BC	; Screen write coordinates
+	RET
+ENTR
+	LD	C,0
+	INC	B
+	LD	A,(IX+FZ)	; Screen window size in lines
+	CP	B
+	JR	NC,SCSTPO
+	CALL	SCROLU
+	LD	B,(IX+FZ)	; Screen window size in lines
+	JR	SCSTPO
+;
+TB0
+	BIT	0,(IX+F3)	; Line edit mode flag
+	JR	Z,ENTR
+	PUSH	BC
+	CALL	EFLIN1
+	POP	BC
+	JR	ENTR
+
+;
+; Set output stream to file
+;
+CANF
+	PUSH	HL
+	LD	HL,OUTCHAR
+	SET	7,(IX+F3)
+	LD	(IX+CN),0	; screen write pos column
+	JR	CAN
+CANW
+	PUSH	HL
+	LD	HL,PRTWO
+	LD	(IX+CN),0	; screen write pos column
+	JR	CAN
+
+;
+; Set output stream to screen
+;
+CANS
+	PUSH	HL
+	LD	HL,SCPRT
+	JR	CAN
+
+;
+; Set output stream to printer
+;
+CANL
+	PUSH	HL
+	LD	HL,LPRT
+	SET	7,(IX+F3)
+CAN	LD	(CHAN),HL
+	POP	HL
+	RET
+
+;
+; Set output stream
+;
+CANSEL
+	BIT	7,(IX+F2)
+	JR	NZ,CANL
+	BIT	3,(IX+F2)
+	JR	NZ,CANF
+	JR	CANS
+
+;
+; Convert an instruction token
+; to a printable form
+;
+FDTB
+	INC	A
+FDTBL2	DEC	A
+	RET	Z
+FDTBL1
+	BIT	7,(HL)
+	INC	HL
+	JR	Z,FDTBL1
+	JR	FDTBL2
+
+
+;
+; Print an error message
+;
+POMSG
+	LD	HL,TBMSG
+	CALL	FDTB
+POMSGL1
+	LD	A,(HL)
+	RES	7,A
+	CALL	OC
+	BIT	7,(HL)
+	RET	NZ
+	INC	HL
+	JR	POMSGL1
+
+;
+;
+INKEY
+A3	LD	BC,#1D40
+	CALL	JPR
+A4	LD	BC,#1CE1
+	JP	JPR
+;
+KEY1
+	CALL	INKEY
+	JR	C,KEYP1
+	CALL	AFMODE
+	JR	KEY1
+KEYP1
+	CP	32
+	RET	NC
+;
+	CP	2
+	JR	NZ,KEYP2
+	LD	A,(FLG2)
+	XOR	1
+	LD	(FLG2),A
+	JR	KEY1
+KEYP2	CP	16
+	JR	NZ,KEYP3
+	LD	A,(FLG2)
+	XOR	|
+	AND	%11110111
+	LD	(FLG2),A
+	JR	KEY1
+KEYP3
+	CP	18
+	JR	NZ,KEYP4
+	LD	A,(CFG)
+	XOR	4
+	LD	(CFG),A
+	JR	KEY1
+KEYP4
+	CP	5
+	JR	NZ,KEYP5
+	LD	A,(CFG)
+	XOR	8
+	LD	(CFG),A
+	JR	KEY1
+KEYP5
+	CP	6
+	RET	NZ
+	LD	A,(FLG2)
+	XOR	8
+	AND	127
+	LD	(FLG2),A
+	BIT	3,A
+	JR	Z,KEYP51
+	LD	DE,STRG3
+	LD	HL,(RTOP)
+	CALL	OUTOPEN
+	JR	KEY1
+KEYP51
+	CALL	OUTCLOSE
+	JR	KEY1
+;
+BREAK
+	CALL	INKEY
+	RET	NC
+	JR	KEY2P1
+;
+KEY2
+	LD	HL,(PC)
+	LD	(LPC),HL
+KEY3	CALL	INKEY
+	JR	NC,KEY3
+KEY2P1	CP	3
+	RET	Z
+	RES	5,A
+	CP	"Q
+	RET
+
+;
+; Open a file
+; B: file name length
+; HL: file name
+; DE: 2Ko buffer
+;
+OUTOPEN
+	SET	4,(IX+F2)
+	CALL	FTNME
+	CALL	#BC8C		; cas out open
+	PUSH	HL
+	POP	IY
+	JR	C,IOFIN
+	JR	IOER7
+
+;
+; Write a buffer to file
+; HL: pointer
+; DE: length
+; BC: ?
+; A: file type ?
+;
+OUTDIREC
+	CALL	EXT
+	CALL	#BC98		; Cas out direct
+	JR	C,IOFIN
+	JR	IOER7
+;
+OUTCLOSE
+	RES	4,(IX+F2)
+	CALL	EXT
+	CALL	#BC8F
+	JR	NC,IOER7
+	JR	STPMT
+;
+OUTER
+	RES	3,(IX+F2)
+	RES	4,(IX+F2)
+	CALL	EXT
+	CALL	#BC92
+STPMT
+	LD	BC,3000
+STPMTL1	PUSH	BC
+	RST	#38
+	POP	BC
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,STPMTL1
+IOFIN	DI
+	LD	IX,PC
+	RET
+;
+;
+INOPEN
+	SET	5,(IX+F2)
+	CALL	FTNME
+	CALL	#BC77
+	JR	C,IOFIN
+IOER7	JP	ERR7
+;
+INDIRECT
+	CALL	EXT
+	CALL	#BC83
+	JR	C,IOFIN
+	JR	IOER7
+;
+INCHAR
+	CALL	EXT
+	CALL	#BC80
+	JR	NZ,IOFIN
+	JP	ERR10
+;
+INCLOSE
+	RES	5,(IX+F2)
+	CALL	EXT
+	CALL	#BC7A
+	JR	C,IOFIN
+	JR	IOER7
+;
+INER
+	RES	5,(IX+F2)
+	CALL	EXT
+	CALL	#BC7D
+	JR	STPMT
+
+;
+FTNME
+	PUSH	HL
+	XOR	A		; clear A
+	BIT	0,(IX+F0)	; 'Use the screen memory' bit
+	CALL	EXT
+	JR	Z,FTNMEP1
+	INC	A		; A = 1
+FTNMEP1
+	CALL	#BC6B		; cas noisy (display cassette messages)
+	EX	DE,HL
+	CALL	NEXLIN
+	EX	DE,HL
+	LD	A,C
+	DEC	A
+	LD	B,A
+	POP	DE
+	RET	NZ
+	JP	ERR0
+	; fall thru CPBUF
+;
+; Returns the floppy buffer address
+;
+CPBUF
+	LD	HL,(WORKH)
+	LD	BC,-2048
+	ADD	HL,BC
+	RET
+;
+TSBK
+	PUSH	DE
+	EX	DE,HL
+	LD	HL,(WORKH)
+	SCF
+	SBC	HL,DE
+	EX	DE,HL
+	POP	DE
+	RET
+;
+;
+INPUT3
+	POP	BC
+	LD	A,(BC)
+	INC	BC
+	PUSH	BC
+	CP	^		; eol
+	JR	Z,INPUT3P1
+	CALL	OC
+	JR	INPUT3
+INPUT3P1
+	CALL	ORT		; Print a CR
+	CALL	INPUT2
+	CALL	SCANL		; Arithmetic expression parser
+	LD	A,B
+	OR	C
+	RET
+;
+INPUT2
+	CALL	RSTHC		; Install the deported stub
+	CALL	FIXSC
+	CALL	CANS
+	CALL	CLWO
+	CALL	INPUT
+	CALL	ORT		; Print a CR
+	CALL	ELISPA
+	EX	DE,HL
+	RET
+;
+INPUTP
+	LD	A,(CURPO)	; cursor position
+	LD	(SPO+1),A	; screen write pos line
+INPUT
+	CALL	AFWO
+	PUSH	BC
+	CALL	KEY1
+	POP	BC
+	CP	32
+	JR	C,IMP1
+	CP	127
+	JR	NC,IMP1
+	LD	HL,(PTWO)
+	EX	AF,AF
+	LD	A,C
+	CP	FM
+	JR	NZ,INPUTP2
+;PING
+	JR	INPUT
+INPUTP2	CALL	SPACE
+	EX	AF,AF
+	LD	(HL),A
+	INC	HL
+	LD	(PTWO),HL
+	JR	INPUT
+IMP1
+	LD	HL,TBIMP
+	LD	C,6
+	CALL	INDEX2
+	LD	(PTWO),HL
+	JR	INPUT
+TBIMP
+	DEFB	#F2,#F3,#7F,13,#F6,#F7
+T1
+	DEFB	IKG-T1
+	DEFB	IKD-T1-1
+	DEFB	IDL-T1-2
+	DEFB	ICR-T1-3
+	DEFB	IKGF-T1-4
+	DEFB	IKDF-T1-5
+IKG
+	DEC	HL
+	LD	A,(HL)
+	INC	HL
+	AND	A
+	RET	Z
+	RES	7,(HL)
+	DEC	HL
+	SET	7,(HL)
+	RET
+IKD
+	LD	A,(HL)
+	RES	7,A
+	CP	13
+	RET	Z
+	RES	7,(HL)
+	INC	HL
+	SET	7,(HL)
+	RET
+IDL
+	DEC	HL
+	LD	A,(HL)
+	INC	HL
+	AND	A
+	RET	Z
+	DEC	HL
+	JR	RECLAW
+ICR
+	RES	7,(HL)
+	CALL	AFWO
+	LD	HL,WORK
+	POP	BC
+	JP	ELISPA
+IKGF
+	LD	B,5
+IKGFL1	CALL	IKG
+	DJNZ	IKGFL1
+	RET
+IKDF
+	LD	B,5
+IKDFL1	CALL	IKD
+	DJNZ	IKDFL1
+	RET
+;
+AFWO
+	LD	HL,WORK
+	XOR	A
+	LD	C,A
+	LD	(SPO),A		; clear SPO
+	LD	A,32
+	CALL	OC
+	DEC	(IX+CN)		; screen write pos column
+	LD	B,(IX+LN)	; screen write pos line
+AFWL1
+	LD	A,(HL)
+	BIT	7,A
+	JR	Z,AFWOP1
+	LD	A,"_
+	BIT	0,(IX+F3)	; Line edit mode flag
+	JR	Z,AFWOP4
+	LD	A,127
+AFWOP4	CALL	OC
+	INC	C
+	LD	A,(HL)
+	RES	7,A
+AFWOP1
+	CP	13
+	JR	Z,AFWOP2
+	CALL	OC
+	INC	C
+	INC	HL
+	JR	AFWL1
+AFWOP2
+	LD	A,C
+	CP	FM
+	JR	Z,AFWOP3
+	LD	A,32
+	CALL	OC
+AFWOP3	LD	(IX+LN),B	; screen write pos line
+	RET
+
+
+;
+; input: HL = line pointer
+;		BC = counter
+;
+SPACE
+	LD	BC,1
+SPACES
+	PUSH	BC
+	CALL	FDLEN		; move HL to EOL
+	POP	DE		; DE = counter
+	PUSH	DE
+	DEC	HL		; decrement read pointer
+	PUSH	HL
+	AND	A		; clear carry
+	ADD	HL,DE
+	CALL	TSBK		; check low limit ?
+	JP	C,ERR8
+	EX	DE,HL		; save HL
+	POP	HL		; HL = last byte of string
+	LDDR			; fill
+	INC	HL		; back to begining of string
+	EX	DE,HL		; DE points to begining of spaces
+	POP	BC		; pop counter
+	RET
+RECLAT
+	PUSH	HL
+	PUSH	HL
+	ADD	HL,BC
+	JR	RECLAM
+RECLAW
+	PUSH	HL
+	PUSH	HL
+	INC	HL
+	JR	RECLAM
+RECLAP
+	PUSH	HL
+	LD	HL,(PTEXT)
+	PUSH	HL
+	CALL	NEXLIN
+RECLAM
+	CALL	FDLEN
+	EX	DE,HL
+	POP	DE
+	LDIR
+	POP	HL
+	RET
+;
+NEXLIN
+	LD	A,(HL)
+	CP	1
+	RET	C
+	LD	A,13
+	JR	FDLP1
+
+;
+; Move HL to end of a (zero terminated) line
+;
+; input: HL = string pointer
+;
+FDLEN
+	XOR	A		; clear accumulator
+FDLP1
+	LD	D,H		; save HL in DE
+	LD	E,L
+	LD	B,^		; allow almost infinite string length
+	CPIR
+	AND	A		; clear carry
+	SBC	HL,DE		; compute lenght
+	LD	B,H		; save length in BC
+	LD	C,L
+	ADD	HL,DE		; HL points to the eol
+	INC	(HL)		;
+	DEC	(HL)
+	RET
+;
+CLWO
+	LD	HL,WORK
+	LD	(HL),141
+	LD	(PTWO),HL
+	INC	HL
+	LD	(HL),0
+	RET
+;
+ELISPA
+	LD	A,(HL)
+	INC	HL
+	CP	32
+	JR	Z,ELISPA
+	DEC	HL
+	CP	13
+	RET
+
+
+;
+; Arithmetic calculator main
+;
+; DE = read pointer
+; returns result in BC
+;
+SCANL
+	PUSH	HL
+	LD	C,0		; clear flags
+	CALL	SCAN		; enter calculator
+	LD	B,H
+	LD	C,L
+	POP	HL
+	RET
+
+;
+; Arithmetic calculator
+;
+; DE = read pointer
+; HL = result.
+;
+SCAN
+	LD	HL,0		; HL is used as a 16 bits accumulator
+	SCF
+SCANL1
+	EX	AF,AF
+	CALL	TSEP
+	JR	Z,SCANPF
+	INC	DE
+	PUSH	BC
+	PUSH	HL		; save accumulator
+	LD	HL,TBOPR	; operators switch tab
+	LD	BC,8		; sizeof tab
+	CPIR
+	JR	Z,SCANP1	; operator symbol found
+	EX	AF,AF
+	JP	NC,ERR0
+	LD	HL,TBOPR+1
+	DEC	DE
+SCANP1				; operator found
+	LD	C,7
+	ADD	HL,BC		; base operator's switch tab
+	LD	C,(HL)		; fecth op offset
+	ADD	HL,BC		; HL is pointer to function op
+	EX	(SP),HL		; HL back to accumulator
+	PUSH	HL
+	CALL	FTVAL		; fetch the second operand
+	EX	DE,HL		; result in DE
+	LD	(PTWO),HL	; save read pointer
+	POP	HL		; HL is back to accumulator
+	POP	BC
+	CALL	JPBC		; operator's function call.
+	LD	DE,(PTWO)	; get back read pointer
+	POP	BC
+	AND	A
+	JR	SCANL1
+;
+SCANPF
+	LD	(PILCA),HL
+	BIT	4,(IX+F1)
+	RET	Z
+	LD	HL,0
+	RET
+
+;
+; Fetch a value from an ascii input string
+; DE: string read pointer
+;
+FTVAL
+	LD	A,(DE)
+	INC	DE
+	CP	48		; "0"
+	JR	C,FTVLP6	; if not a number
+	CP	58		; "9" + 1
+	JR	C,FTDEC		; it's a decimal
+FTVLP6	CP	"#"		; hexa prefix ?
+	JR	Z,FTHEX
+	CP	"%		; binary prefix
+	JR	Z,FTBIN
+	CP	34		; '"' ascii prefix
+	JR	Z,FTASC
+	CP	"$		; the 'current program counter' symbol
+	JR	Z,FTPC
+	CP	":"		; ???
+	JP	Z,FTPEEK
+	DEC	DE
+	BIT	4,(IX+F1)
+	JR	NZ,FTVLP9
+	CALL	FTLAB		; search label
+	LD	H,B
+	LD	L,C
+	RET	Z
+	BIT	7,(IX+F1)
+	JP	NZ,ERR5
+	BIT	1,(IX+F3)	; assembly phase ?
+	JP	Z,ERR11
+	JP	LABABS
+FTVLP9	RES	4,(IX+F1)
+	CALL	LABEL
+	SET	4,(IX+F1)
+	LD	HL,1
+	RET
+
+;
+; Fetch a string from input buf
+;
+FTASC
+	LD	A,(DE)
+	LD	L,A
+	LD	H,0
+	INC	DE
+	LD	A,(DE)
+	CP	34		; '"'  eos marker
+	INC	DE
+	RET	Z
+	DEC	DE
+	CALL	TSEP1
+	RET	Z
+	JP	ERR0
+
+;
+; Fetch the current 'program counter'
+; (during assembly)
+;
+FTPC
+	LD	HL,(LPC)
+	RET
+;
+FTHEX
+	LD	A,16		; radix
+	JR	FNUMB
+
+FTBIN	LD	A,2
+	JR	FNUMB
+FTDEC	LD	A,10
+	DEC	DE
+
+;
+; Fetch a number from input buf
+; A = radix
+; DE = read pointer
+;
+FNUMB
+	LD	C,A
+	EX	AF,AF
+FNBL1	LD	A,(DE)
+	INC	DE
+	CALL	FTCHI		; peek a digit
+	JR	NC,FNBL1	; loop while OK
+	DEC	DE		; rewind
+	BIT	4,(IX+F1)
+	RET	NZ
+	PUSH	DE		; save read pointer
+	LD	B,D		; BC is now the read pointer
+	LD	C,E
+	DEC	BC		; rewind one more byte
+	LD	HL,0
+	LD	DE,1
+FDL0
+	LD	A,(BC)		; fetch one digit
+	DEC	BC		; rewind one more byte
+	PUSH	BC
+	EX	AF,AF'
+	LD	C,A		; C = radix
+	EX	AF,AF'
+	CALL	FTCHI		; peek a digit
+	JR	C,FNBPF
+	OR	A
+	JR	Z,FDP1
+	LD	B,A
+	LD	A,D
+	OR	E
+	JP	Z,ERR3
+FDL1	ADD	HL,DE
+	JP	C,ERR3
+	DJNZ	FDL1
+FDP1	PUSH	HL
+	LD	B,C
+	LD	HL,0
+FDL2	ADD	HL,DE
+	DJNZ	FDL2
+	EX	DE,HL
+	POP	HL
+	POP	BC
+	JR	FDL0
+FNBPF
+	POP	BC
+	POP	DE
+	RET
+;
+FTPEEK
+	LD	A,(DE)
+	CP	":
+	PUSH	AF
+	JR	NZ,FTPKP1
+	INC	DE
+FTPKP1	CALL	FTVAL
+	CALL	KEEPH
+	LD	C,A
+	POP	AF
+	JR	Z,FTPKP2
+	LD	L,C
+	LD	H,0
+	RET
+FTPKP2
+	INC	HL
+	CALL	KEEPH
+	LD	H,A
+	LD	L,C
+	RET
+
+;
+; Peek a digit decimal or Hexa
+; C = radix
+;
+FTCHI
+	CP	65		; "A"
+	JR	C,FTCHP2
+	RES	5,A		; lower case
+FTCHP2
+	SUB	48		; "0"
+	RET	C
+	CP	10
+	JR	C,FTCHP1
+	CP	17
+	RET	C
+	SUB	7
+FTCHP1	CP	C
+	CCF
+	RET
+
+;
+; Calculator's operators functions
+;
+; a op b
+; a in HL, b in DE
+;
+TBOPR
+	DEFM	+-*/?&@!
+T2				; switch table
+	DEFB	OP1-T2
+	DEFB	OP2-T2-1
+	DEFB	OP3-T2-2
+	DEFB	OP4-T2-3
+	DEFB	OP5-T2-4
+	DEFB	OP6-T2-5
+	DEFB	OP7-T2-6
+	DEFB	OP8-T2-7
+
+;
+; Operator '+'
+;
+OP1
+	ADD	HL,DE
+	RET
+
+;
+; Operator '-'
+;
+OP2
+	AND	A
+	SBC	HL,DE
+	RET
+
+;
+; Operator '*'
+;
+OP3
+	AND	A
+	SBC	HL,DE
+	ADD	HL,DE
+	JR	NC,OP3P1
+	EX	DE,HL
+OP3P1	AND	A
+	LD	B,H
+	LD	C,L
+	SBC	HL,BC
+OP3L1	LD	A,D
+	OR	E
+	RET	Z
+	ADC	HL,BC
+	JP	C,ERR3
+	DEC	DE
+	JR	OP3L1
+
+;
+; Operator '/'
+;
+OP4
+	LD	A,D
+	OR	E
+	JP	Z,ERR3
+	LD	BC,0
+OP4L1	SBC	HL,DE
+	INC	BC
+	JR	NC,OP4L1
+	DEC	BC
+	LD	H,B
+	LD	L,C
+	RET
+
+;
+; Operator '?' (modulo)
+;
+OP5
+	PUSH	HL
+	CALL	OP4		; divide
+	CALL	OP3		; multiply
+	EX	DE,HL
+	POP	HL
+	JR	OP2		; substract
+
+;
+; Operator '&' (logical AND)
+;
+OP6
+	LD	A,H
+	AND	D
+	LD	H,A
+	LD	A,L
+	AND	E
+	LD	L,A
+	RET
+
+;
+; Operator '@' (logical OR)
+;
+OP7
+	LD	A,H
+	OR	D
+	LD	H,A
+	LD	A,L
+	OR	E
+	LD	L,A
+	RET
+
+;
+; Operator '!' (logical XOR)
+;
+OP8
+	LD	A,H
+	XOR	D
+	LD	H,A
+	LD	A,L
+	XOR	E
+	LD	L,A
+	RET
+
+
+;
+;
+ONB4	LD	A,4
+	JR	OUTNB2
+ONB12	LD	A,12
+	JR	OUTNB2
+DEC1S	LD	A,8
+	JR	OUTNB1
+HEX1	LD	A,27
+	JR	OUTNB1
+HEX2S	LD	A,1
+	JR	OUTNB1
+DEC2S	XOR	A
+	JR	OUTNB1
+
+;
+; Print a number
+;
+OUTNB
+	XOR	A
+OUTNB2	XOR	(IX+F2)
+	AND	254
+	XOR	(IX+F2)
+OUTNB1	PUSH	HL
+	LD	L,A
+	PUSH	DE
+	PUSH	BC
+	BIT	3,L
+	JR	Z,OUTNBP1
+	LD	D,0
+OUTNBP1	EX	AF,AF
+	BIT	0,L
+	JR	Z,ODEC
+	BIT	4,L
+	LD	A,"#
+	CALL	Z,OC
+	EX	AF,AF
+	LD	A,D
+	CALL	Z,OHEX1
+	SET	1,L
+	LD	A,E
+	CALL	OHEX1
+	JR	ONBF
+;
+; Output a number in hex
+;
+OHEX1
+	PUSH	AF
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	CALL	OHEX2
+	POP	AF
+OHEX2	AND	15
+	ADD	A,#90
+	DAA
+	ADC	A,#40
+	DAA
+	JR	OUTDG
+;
+; Output a number decimal
+;
+ODEC
+	EX	AF,AF
+	JR	NZ,ODP1
+	LD	BC,-10000
+	CALL	PRCH
+	LD	BC,-1000
+	CALL	PRCH
+ODP1
+	LD	BC,-100
+	CALL	PRCH
+	LD	C,-10
+	CALL	PRCH
+	LD	A,E
+	ADD	A,48
+	CALL	OC
+ONBF
+	POP	BC
+	POP	DE
+	POP	HL
+	RET
+
+
+PRCH
+	EX	DE,HL
+	XOR	A
+PRCHL1	ADD	HL,BC
+	INC	A
+	JR	C,PRCHL1
+	SBC	HL,BC
+	EX	DE,HL
+	ADD	A,47
+OUTDG
+	CP	48
+	JR	NZ,OUTDG1
+	BIT	1,L
+	JR	NZ,OUTDG2
+	BIT	2,L
+	RET	NZ
+	LD	A,32
+	JR	OUTDG2
+OUTDG1	SET	1,L
+OUTDG2	JP	OC
+;
+;
+INDEX1
+	LD	E,C
+	LD	B,0
+	PUSH	HL
+	CPIR
+	POP	HL
+	RET	NZ
+	LD	A,E
+	SUB	C
+	DEC	A
+	LD	C,E
+	ADD	HL,BC
+	RLCA
+	LD	C,A
+	ADD	HL,BC
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	CP	A
+	RET
+INDEX2
+	PUSH	HL
+	LD	E,C
+	LD	B,0
+	CPIR
+	POP	HL
+	JR	NZ,IDX2P1
+	LD	A,E
+	DEC	A
+	SUB	C
+	LD	C,E
+	ADD	HL,BC
+	LD	C,A
+	ADD	HL,BC
+	LD	C,(HL)
+	ADD	HL,BC
+	PUSH	HL
+IDX2P1	LD	HL,(PTWO)
+	RET
+
+;
+; Command 'N'
+;
+NEW
+	LD	HL,TEXT
+	LD	(HL),0		; reset source code
+	LD	(PTEXT),HL	; reset write pointer
+	CALL	USEMEM		; Clear symbols table
+NEW2
+	CALL	RSTHC		; Install the deported stub
+	CALL	CANS
+	CALL	CLS
+	LD	A,17
+	JP	POMSG
+
+;
+; DAMS main entry point after relocation has
+; been done.
+;
+ENTRY
+	DI
+	LD	(LPC),SP	; save SP (use LPC as a temporary var ?)
+	CALL	INITR		; save curent registers value
+	LD	HL,(LPC)
+	LD	(STK2),HL	; store user's stack pointer
+	CALL	STMODE		; sets creen mode
+	CALL	NEW2
+	JR	MONIT
+
+;
+ERR0	XOR	A
+	DEFB	1
+ERR1	LD	A,1
+	DEFB	1
+ERR2	LD	A,2
+	DEFB	1
+ERR3	LD	A,3
+	DEFB	1
+ERR4	LD	A,4
+	DEFB	1
+ERR5	LD	A,5
+	DEFB	1
+ERR6	LD	A,6
+	DEFB	1
+ERR7	LD	A,7
+	DEFB	1
+ERR8	LD	A,8
+	DEFB	1
+ERR9	LD	A,9
+	DEFB	1
+ERR10	LD	A,10
+	DEFB	1
+ERR11	LD	A,11
+	DEFB	1
+ERR12	LD	A,12
+	PUSH	AF
+	LD	IX,PC
+	BIT	4,(IX+F2)
+	CALL	NZ,OUTER
+	BIT	5,(IX+F2)
+	CALL	NZ,INER
+	POP	AF
+	DI
+	LD	SP, WORKZ	; transient stack top
+	PUSH	AF
+	CALL	CANS
+	BIT	1,(IX+F3)	; assembly phase ?
+	JR	Z,ERRP6
+	LD	HL,(PTWO)
+	CALL	BAKLIN
+	LD	(PTEXT),HL
+ERRP6
+	BIT	0,(IX+F0)	; 'Use the screen memory' bit
+	CALL	NZ,CLS
+	CALL	ORT		; Print a CR
+	POP	AF
+	LD	E,A
+	LD	A,12
+	CALL	OUTNB1
+	LD	A,".
+	CALL	OC
+	LD	A,32
+	CALL	OC
+	LD	A,E
+	CALL	POMSG
+	CALL	PRTL
+	DEFB	32
+	DEFM	Error.
+	DEFB	13,^
+	; fall thru MONIT
+;
+;
+MONIT
+	DI
+	LD	SP,(RTOP)	; init stack pointer
+	LD	IX,PC
+	LD	(IX+FZ),25	; Screen window size in lines
+	XOR	A		; clear A
+	LD	(IX+F3),A	; Reset flags
+	LD	(IX+F1),A
+	LD	(IX+F0),A
+	CALL	INPUT2		; read keyboard line
+	JR	Z,MONIT
+	INC	DE
+	PUSH	AF
+	EX	DE,HL
+	CALL	ELISPA		; remove spaces
+	EX	DE,HL
+	POP	AF
+	EXX
+	LD	HL,TBMNT
+	LD	C,TBMNR-TBMNT
+	CP	96
+	JR	C,MONITP1
+	RES	5,A		; case fold
+MONITP1
+	CALL	INDEX1		; switch on command
+	JP	NZ,ERR0
+	EXX
+	CP	TBMNS-TBMNR
+	CALL	NC,SCANL	; Arithmetic expression parser
+	EXX
+	CALL	JPDE		; command call
+MONITP9
+	JR	MONIT
+
+;
+; Monitor commands
+;
+TBMNT	DEFM	LN.DTKRHJOXPGSABQWFEM!
+TBMNR				; commands switch
+	DEFW	EDITOR
+	DEFW	NEW
+	DEFW	RGIMP
+	DEFW	DESAM
+	DEFW	TRACE
+	DEFW	DUMP
+	DEFW	RTRAC
+	DEFW	DESS
+	DEFW	RUNP
+TBMNS
+	DEFW	PRINT
+	DEFW	ETAT
+	DEFW	SAVE
+	DEFW	LOAD
+	DEFW	IMPSTR
+	DEFW	ASSEMB
+	DEFW	BASIC
+	DEFW	POKE
+	DEFW	DOKE
+	DEFW	ASSBLK
+	DEFW	SETEX
+	DEFW	MEMORY
+	DEFW	SETBRK
+
+;
+; Change DAMS memory limits
+;
+MEMORY
+	LD	A,B
+	CP	#49
+	JR	C,MEME13
+	LD	HL,TEXT
+	PUSH	HL
+	LD	DE,2304
+	ADD	HL,DE
+	SBC	HL,BC
+	JR	NC,MEME13
+	POP	HL
+	PUSH	BC
+	CALL	FDLEN
+	POP	BC
+	LD	DE,256		; stack size
+	ADD	HL,DE
+	SBC	HL,BC
+	JR	NC,MEME13
+	LD	HL,(HIMEM)	; upper memory limit
+	SBC	HL,BC
+	JP	C,ERR8
+	LD	(RTOP),BC	; stack top
+	LD	HL,-256		; stack size
+	ADD	HL,BC
+	LD	(WORKH),HL
+	LD	SP, WORKZ	; use a transient stack
+	CALL	USEMEM		; Clear symbols table
+	JR	MONITP9		; cannot return to monit since we've changed stack, so jump.
+MEME13	JP	ERR12
+
+;
+;
+PRINT
+	CALL	TENDLI
+	LD	D,B
+	LD	E,C
+	LD	A,"="
+	CALL	OC
+	CALL	ONB4
+	JP	ORT		; Print a CR
+;
+;
+SETEX
+	CALL	TENDLI
+	CALL	FT8B
+	CP	252
+	JP	NC,ERR3
+	LD	(CFGE),A
+	RET
+
+;
+; command 'Pn,file'
+;
+SAVE
+	CALL	TFILI		; args expected
+	LD	A,C
+	CP	2		; P2,file ?
+	JR	Z,SAVE2
+	CP	3		; P3,file ?
+	JR	Z,SAVE3
+	; P0
+	PUSH	BC
+	CALL	CPBUF		; HL = floppy buf
+	CALL	OUTOPEN
+	POP	BC
+	LD	HL,TEXT		; source code start address
+	DEC	C
+	JR	NZ,SAVP1
+	LD	HL,(PTEXT)
+SAVP1	CALL	FDLEN
+	EX	DE,HL
+	LD	D,B
+	LD	E,C
+	JR	SAVEP5
+SAVE2
+	LD	HL,(EDCSV)	; fecth end of object code
+	LD	A,H
+	OR	L
+	JP	Z,ERR5		; check for something's been assembled
+	PUSH	HL
+	CALL	CPBUF		; get floppy buffer
+	CALL	OUTOPEN		; open file for writing
+	POP	HL
+	LD	DE,(BORG)	; fetch start of object code
+	SCF
+	SBC	HL,DE		; compute object code length
+	EX	DE,HL
+	JR	C,IOER8
+	INC	DE		; cansel carry
+	LD	BC,(ENTSV)	; no use!!
+	JR	SAVEP5
+SAVE3
+	CALL	SCANL		; Arithmetic expression parser
+	PUSH	BC
+	CALL	TFILI		; arg expected
+	CALL	SCANL		; Arithmetic expression parser
+	CALL	TFILI
+	PUSH	BC
+	CALL	CPBUF
+	CALL	OUTOPEN
+	POP	DE
+	POP	HL
+SAVEP5
+	; HL = read pointer
+	; DE = length
+	LD	(IY+25),E
+	LD	(IY+24),D
+	LD	A,2
+	CALL	OUTDIREC
+	JP	OUTCLOSE
+
+;
+; Command 'Gn,file
+;
+LOAD
+	CALL	TFILI		; args expected
+	LD	A,B
+	OR	C
+	JR	NZ,LOADB	; load binary file
+	CALL	CPBUF
+	CALL	INOPEN
+	CP	2
+	JP	NZ,ERR7
+	PUSH	BC
+	LD	HL,TEXT
+	CALL	FDLEN
+	DEC	HL
+	POP	BC
+	PUSH	HL
+	ADC	HL,BC
+	JR	C,IOER8
+	CALL	TSBK
+IOER8	JP	C,ERR8
+	POP	HL
+	LD	(PTEXT),HL
+	CALL	INDIRECT
+	JP	INCLOSE
+;
+; Load a binary file in memory
+;
+LOADB
+	PUSH	BC
+	CALL	USEMEM		; Clear symbols table
+	LD	HL,(RTOP)
+	LD	BC,2048		; floppy buf size
+	ADD	HL,BC
+	CALL	TSHM
+	JP	C,ERR8
+	LD	(END),HL	; DAMS brk address
+	SBC	HL,BC
+	EX	(SP),HL
+	CALL	TSLOC
+	EX	(SP),HL
+	CALL	INOPEN
+	POP	HL
+	AND	%1110
+	CP	6
+	JR	Z,LDFL
+	CALL	LDTS
+	CALL	INDIRECT
+	JR	LOADP2
+LDFL
+	LD	BC,0
+LDFLL1
+	CALL	TSLOC
+	CALL	TSHM
+IOER81	JR	C,IOER8
+	CALL	RD2C		; read hexa byte
+	JR	NC,LDFLP1
+	LD	(HL),A
+	INC	HL
+	INC	BC
+	JR	LDFLL1
+LDFLP1
+	LD	D,B
+	LD	E,C
+	CALL	OUTNB
+	LD	A,20
+	CALL	POMSG
+LOADP2	CALL	INCLOSE
+	JP	USEMEM		; Clear symbols table
+
+;
+; input an ascii hexadecimal number
+; to binary (atoi)
+;
+RD2C
+	LD	DE, WORKZ	; a temporary buffer
+LDFLL2
+	CALL	INCHAR
+	RET	NC
+	CP	32
+	JR	C,LDFLL2	; again
+	PUSH	DE
+	LD	(DE),A
+	INC	DE
+	CALL	INCHAR
+	LD	(DE),A
+	INC	DE
+	LD	A,13
+	LD	(DE),A
+	POP	DE
+	PUSH	BC
+	PUSH	HL
+	CALL	FTHEX		; fetch a hex number
+	LD	A,L
+	POP	HL
+	POP	BC
+	SCF
+	RET
+;
+LDTS
+	PUSH	HL
+	CALL	TSLOC
+	JR	NC,LOADBP1
+	ADD	HL,BC
+	CALL	TSLOC
+	POP	HL
+	RET	C
+	JP	ERR12
+LOADBP1
+	ADD	HL,BC
+	CALL	TSHM
+	POP	HL
+	RET	NC
+	JR	IOER81
+;
+LDBLK
+	CALL	CPBUF
+	CALL	INOPEN
+	CP	2
+	JP	NZ,ERR7
+	LD	HL,TEXT
+	PUSH	HL
+	ADD	HL,BC
+	CALL	TSBK
+	JR	C,IOER81
+	POP	HL
+	LD	(PTEXT),HL
+	CALL	INDIRECT
+	CALL	INCLOSE
+	RET
+;
+;
+ETAT
+	CALL	TENDLI
+	INC	C
+	DEC	C
+	JR	Z,AFFP
+;
+	CALL	CANSEL
+	LD	HL,(VAR)	; The symbols table
+	DEC	C
+	JR	NZ,OLABI
+OLABL1
+	LD	A,(HL)
+	AND	A
+	JR	Z,OLABPF
+	CALL	AFLAB
+	PUSH	HL
+	CALL	KEY2
+	POP	HL
+	JR	NZ,OLABL1
+	JP	Z,ERR10
+OLABI
+	LD	A,(HL)
+	AND	A
+	JR	Z,OLABPF
+	PUSH	HL
+	BIT	7,A
+	CALL	Z,AFLAB
+	POP	HL
+	LD	BC,10
+	ADD	HL,BC
+	JR	OLABI
+OLABPF
+	CALL	ORT		; Print a CR
+;
+AFFP
+	CALL	PRTL
+	DEFB	13,"T,"e,"x,"t,":,^
+	LD	DE,TEXT
+	CALL	OUTNB
+	EX	DE,HL
+	CALL	FDLEN
+	EX	DE,HL
+	PUSH	BC
+	CALL	PRTL
+	DEFB	6,"E,"n,"d,":,^
+	CALL	OUTNB
+	LD	A,6
+	CALL	OC
+	POP	DE
+	CALL	OUTNB
+	LD	A,20
+	CALL	POMSG
+	CALL	PRTL
+	DEFM	Hmem:
+	DEFB	^		; eol
+	LD	DE,(RTOP)
+	CALL	OUTNB
+	JP	ORT		; Print a CR
+;
+AFLAB
+	LD	D,H
+	LD	E,L
+	LD	B,8
+AFLABL1
+	LD	A,(HL)
+	RES	7,A
+	INC	HL
+	AND	A
+	JR	Z,AFLABP1
+	CALL	OC
+	DJNZ	AFLABL1
+AFLABP1
+	LD	A,B
+	INC	A
+	CALL	SPCS
+	LD	HL,8
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	CALL	OUTNB
+	LD	A,6
+	JP	OC
+;
+;
+IMPSTR
+	LD	A,C
+	CP	3
+	JR	Z,IMPSTR3
+	PUSH	BC
+	EX	DE,HL
+	LD	A,(HL)
+	CP	13
+	JR	Z,IMPSTP3
+	INC	HL
+	LD	A,(HL)
+	CP	32
+	JR	NZ,IMPSTP2
+	INC	HL
+	LD	A,(HL)
+	DEC	HL
+	CP	32
+	JR	NZ,IMPSTP2
+	INC	HL
+	INC	HL
+	CALL	RDWO2
+	JR	IMPSTP3
+IMPSTP2
+	CALL	RDWO1
+IMPSTP3	POP	BC
+	JR	NC,AFSTR
+	LD	DE,STRG1
+	DEC	C
+	JR	Z,IMPSTRP1
+	DEC	C
+	JR	NZ,AFSTR
+	LD	DE,STRG2
+IMPSTRP1 LD	BC,15
+	LDIR
+	EX	DE,HL
+	LD	(HL),13
+AFSTR
+	LD	HL,STRG1
+	CALL	AFLIN1
+	LD	HL,STRG2
+	CALL	AFLIN1
+	LD	HL,STRG3
+	JP	AFLIN1
+IMPSTR3
+	CALL	TFILI
+	EX	DE,HL
+	CALL	ELISPA
+	LD	DE,STRG3
+	JR	IMPSTRP1
+
+;
+; The 'B' command
+;
+BASIC
+	LD	(IX+CFGE-PC),0
+	CALL	KEEP
+	LD	BC,#7F86
+	OUT	(C),C
+	OR	A
+	EX	AF,AF
+	EXX
+	EI
+A6	JP	#C064
+
+;
+; The 'Q' command
+;
+POKE
+	LD	A,1
+	JR	POKEP1
+
+;
+; The 'W' command
+;
+DOKE
+	XOR	A
+POKEP1	PUSH	AF
+	LD	H,B
+	LD	L,C
+	CALL	TSLOC
+	POP	BC
+POKEP5
+	PUSH	BC
+	LD	A,(DE)
+	INC	DE
+	CP	",
+	JR	NZ,RGIMPPE
+	CALL	SCANL		; Arithmetic expression parser
+	CALL	TENDLI
+	LD	(HL),C
+	POP	AF
+	AND	A
+	JP	NZ,FT8B
+	INC	HL
+	LD	(HL),B
+	RET
+
+;
+; The '.' command (set register)
+;
+RGIMP
+	LD	B,^
+	LD	HL,TBRG2
+RGIMPL2
+	INC	B
+	LD	A,(DE)
+	INC	DE
+	CP	".
+	JR	Z,RGIMPL2
+	DEC	DE
+RGIMPL1
+	LD	A,(DE)
+	RES	5,A
+	CP	(HL)
+	INC	HL
+	JR	NZ,RGIMP1
+	INC	DE
+	LD	A,(DE)
+	RES	5,A
+	CP	(HL)
+	JR	Z,RGIMP2
+	DEC	DE
+RGIMP1
+	INC	HL
+	INC	HL
+	INC	(HL)
+	DEC	(HL)
+	JR	NZ,RGIMPL1
+RGIMPPE	JP	ERR0
+RGIMP2
+	INC	DE
+	INC	HL
+	LD	C,(HL)
+	LD	A,(DE)
+	CP	"'
+	JR	NZ,RGIMPP3
+	INC	DE
+	LD	A,C
+	CP	22
+	LD	C,4
+	JR	Z,RGIMPP3
+	JR	NC,RGIMPPE
+	CP	16
+	JR	C,RGIMPPE
+	SUB	10
+	LD	C,A
+RGIMPP3
+	LD	A,B
+	LD	B,0
+	LD	HL,PC
+	ADD	HL,BC
+	LD	B,A
+	DEC	A
+	JR	NZ,POKEP5
+	INC	HL
+	JR	POKEP5
+TBRG2
+	DEFB	"S,"P,24
+	DEFB	"I,"X,12
+	DEFB	"I,"Y,14
+	DEFB	"H,"L,16
+	DEFB	"D,"E,18
+	DEFB	"B,"C,20
+	DEFB	"A,"F,22
+	DEFB	"I,"R,2
+	DEFB
+
+;
+; Set a breakpoint at BC
+;
+SETBRK
+	LD	A,B		; check not null
+	OR	C
+	CALL	NZ,SWAP		; install the BP
+AFFBRK
+	CALL	PRTL
+	DEFM	Break in
+	DEFB	^		; eos
+	LD	DE,(BRKPT)
+	CALL	OUTNB		; print the breakpoint address
+	JP	ORT		; Print a CR and return.
+
+;
+; Install a breakpoint at BC, cancelling a previous one
+;
+SWAP
+	PUSH	BC
+	LD	HL,BRKCPY	; storage for the original user's code
+	LD	DE,(BRKPT)	; DE = requested breakpoint address
+	LD	BC,3
+	PUSH	BC
+	LDIR			; Restore the breakpoint location original code
+	POP	BC
+	POP	HL
+	PUSH	HL
+	LD	(BRKPT),HL	; store the new BP address
+	LD	DE,BRKCPY
+	PUSH	BC
+	LDIR			; Save the BP pointed bytes (original user's code)
+	POP	BC
+	LD	HL,SWAPZ	; HL = address of our debugger breakpoint entry point
+	POP	DE
+	LDIR			; patch the user's code with a jump to our breakpoint entry
+	RET
+
+SWAPZ				; A 'jump to dams debuger' sample code used by the BP installer
+	DEFB	195		; 195 => opcode 'jump'
+	DEFW	BRKENT
+
+;
+*F,D2.BIN
+;
+; DAMS - An integrated Editor/Assembler/debugger for the AMSMTRAD CPC.
+; Copyright 1984-2015  Pascal Séguy  <pascal.seguy@laposte.net>
+;
+; File D2.BIN - Editor and assembler
+;
+
+;
+; Editor entry point ('L' command)
+;
+EDITOR
+	LD	A,(DE)
+	CP	13
+	JR	Z,EDIT2
+	CP	";
+	LD	HL,TEXT
+	JR	Z,EDITP11
+	CALL	FDLAB
+	RET	NZ
+	CALL	BAKLIN
+EDITP11	LD	(PTEXT),HL
+EDIT2
+	CALL	CLS
+	CALL	AFPAGE
+EDIL1
+	SET	0,(IX+F3)	; Line edit mode flag
+	LD	A,">
+	CALL	AFCUR
+	CALL	KEY1
+	PUSH	AF
+	LD	A,32
+	CALL	AFCUR
+	POP	AF
+	LD	HL,(PTEXT)
+	EXX
+	LD	HL,TBEDI
+	LD	C,13
+	CALL	INDEX1
+	CALL	Z,JPDE
+	JR	EDIL1
+;
+TBEDI
+	DEFB	#F6,#F3,#F0,#F1,#7F,13
+	DEFB	#E0,4,3,11,#F5,#F4,#F2
+	DEFW	LKGA
+	DEFW	LKDR
+	DEFW	LHAU
+	DEFW	LBAS
+	DEFW	LDEL
+	DEFW	LCRT
+	DEFW	LEDIT
+	DEFW	LDELT
+	DEFW	LDUPL
+	DEFW	DELPTEX
+	DEFW	PAGED
+	DEFW	PAGUP
+	DEFW	LKDR
+LCRT
+	POP	BC
+	JP	CLS
+;
+LKGA
+	LD	HL,(PTEXT)
+	CALL	NEXLIN
+	LD	(PTEXT),HL
+	LD	A,(CURPO)	; cursor position
+	INC	A
+	LD	(CURPO),A
+	CP	24
+	JR	Z,LKGP2
+	JR	NC,LKGP1
+	LD	C,A
+	CALL	SCROLD
+	JR	LKGP2
+LKGP1
+	LD	C,23
+	CALL	SCROLU
+	DEC	(IX+CP)		; cursor position
+LKGP2
+	LD	B,(IX+CP)	; cursor position
+	LD	(IX+LN),B	; screen write pos line
+	CALL	EFLIN
+	CALL	CLWO
+LKGL1
+	CALL	INPUTP
+	JR	Z,LKGP5
+	CALL	RDWO
+	JR	NC,LKGL1
+	CALL	ADDLIN
+	CALL	AFPA2
+	JR	LKGA
+LKGP5
+	LD	HL,(PTEXT)
+	JR	LDELP2
+;
+LKDR
+	CALL	CREWO
+	RET	C
+	LD	B,(IX+CP)	; cursor position
+	CALL	EFLIN
+LKDRL1
+	CALL	INPUTP
+	JR	Z,LKDRP1
+LKDRP2	CALL	RDWO
+	JR	NC,LKDRL1
+	CALL	RECLAP
+	CALL	ADDLIN
+LKDRP1	JP	AFLIN
+;
+LDEL
+	LD	A,(HL)
+	AND	A
+	RET	Z
+	CALL	RECLAP
+	LD	A,(HL)
+	AND	A
+	JP	NZ,AFPA2
+LDELP2	CALL	BAKLIN
+	CALL	C,CLS
+	LD	(PTEXT),HL
+	DEC	(IX+CP)		; cursor position
+	JR	NZ,LDELP1
+	INC	(IX+CP)		; cursor position
+LDELP1	JP	AFPA2
+;
+LHAU
+	LD	HL,(PTEXT)
+	CALL	BAKLIN
+	RET	C
+	LD	(PTEXT),HL
+	DEC	(IX+CP)		; cursor position
+	RET	NZ
+	RES	0,(IX+F3)	; Line edit mode flag
+	LD	C,1
+	CALL	SCROLD
+	INC	(IX+CP)		; cursor position
+	CALL	AFLIN
+	CALL	INKEY
+	RET	NC
+	JR	LHAU
+;
+LBAS
+	LD	HL,(PTEXT)
+	CALL	NEXLIN
+	RET	C
+	RET	Z
+	LD	(PTEXT),HL
+	LD	A,(CURPO)	; cursor position
+	INC	A
+	LD	(CURPO),A
+	CP	25
+	RET	C
+	RES	0,(IX+F3)	; Line edit mode flag
+	LD	C,23
+	CALL	SCROLU
+	DEC	(IX+CP)		; cursor position
+	CALL	AFLIN
+	CALL	INKEY
+	RET	NC
+	JR	LBAS
+;
+LEDIT
+	LD	DE,STRG1
+	CALL	FDSTR
+	RET	NZ
+	CALL	CLS
+	INC	HL
+	CALL	BAKLIN
+	LD	(PTEXT),HL
+	PUSH	HL
+	LD	B,8
+LEDITL1
+	CALL	BAKLIN
+	JR	C,LEDITP1
+	DJNZ	LEDITL1
+LEDITP1
+	LD	A,9
+	SUB	B
+	LD	(CURPO),A	; cursor position
+	LD	A,1
+	CALL	AFPA3
+	LD	A,"$
+	CALL	AFCUR
+	CALL	KEY1
+	RES	5,A
+	CP	"S
+	POP	HL
+	RET	NZ
+;
+	PUSH	HL
+	CALL	NEXLIN
+	EX	DE,HL
+	LD	DE, WORKZ	; temporary buffer
+	PUSH	DE
+	LDIR
+	EX	DE,HL
+	LD	(HL),C
+	POP	HL
+	LD	DE,STRG1
+	CALL	FDSTR
+	PUSH	HL
+	CALL	RECLAT
+	LD	HL,WORKZ	; temporary buffer
+	CALL	NEXLIN
+	PUSH	BC
+	LD	HL,STRG2
+	CALL	NEXLIN
+	DEC	C
+	POP	HL
+	LD	A,40-6+1
+	SUB	L
+	CP	C
+	JR	NC,SUBSP1
+	LD	C,A
+SUBSP1	POP	HL
+	PUSH	DE
+	CALL	SPACES
+	POP	HL
+	LDIR
+	LD	HL, WORKZ	; temporary buffer
+	LD	(PTEXT),HL
+	CALL	CREWO1
+	RES	7,(HL)
+	POP	HL
+	LD	(PTEXT),HL
+	CALL	LKDRP2
+	JP	LEDIT
+;
+FDSTR
+	LD	A,(DE)
+FDSTRL2
+	INC	(HL)
+	DEC	(HL)
+	JR	Z,FDSTRP1
+	CP	(HL)
+	INC	HL
+	JR	NZ,FDSTRL2
+	PUSH	HL
+	PUSH	DE
+	INC	DE
+	LD	C,1
+	CALL	RDSTR
+	POP	DE
+	POP	HL
+	DEC	HL
+	RET	Z
+	INC	HL
+	JR	FDSTR
+FDSTRP1
+	INC	A
+	RET
+;
+RDSTR
+	LD	A,(DE)
+	CP	13
+	RET	Z
+	CP	(HL)
+	RET	NZ
+	INC	DE
+	INC	HL
+	INC	C
+	JR	RDSTR
+;
+PAGED
+	INC	(HL)
+	DEC	(HL)
+	RET	Z
+	PUSH	HL
+	LD	(IX+CP),1	; cursor position
+	LD	B,23
+PAGEDL1
+	PUSH	BC
+	CALL	NEXLIN
+	POP	BC
+	JR	Z,PAGEDP1
+	INC	(IX+CP)		; cursor position
+	DJNZ	PAGEDL1
+PAGEDP1	PUSH	AF
+	CALL	Z,BAKLIN
+	POP	AF
+	CALL	Z,CLS
+	LD	(PTEXT),HL
+	POP	HL
+	LD	A,1
+	JP	AFPA3
+;
+PAGUP
+	INC	(HL)
+	DEC	(HL)
+	RET	Z
+	LD	B,23
+	LD	(IX+CP),1	; cursor position
+PAGUPL1
+	PUSH	BC
+	CALL	BAKLIN
+	POP	BC
+	DJNZ	PAGUPL1
+	LD	(PTEXT),HL
+	LD	A,1
+	JP	AFPA3
+;
+LDUPL
+	CALL	FDLTEX
+LDUPP1	RET	NZ;PING
+	CALL	TESPOT
+	JR	C,LDUPP1
+	INC	HL
+	INC	HL
+	PUSH	HL
+	DEC	BC
+	DEC	BC
+	DEC	BC
+	DEC	BC
+	LD	HL,(PTEXT)
+	PUSH	BC
+	CALL	NEXLIN
+	POP	BC
+	CALL	SPACES
+	POP	HL
+	SBC	HL,DE
+	ADD	HL,DE
+	JR	C,LDUPP2
+	ADD	HL,BC
+LDUPP2	LDIR
+	JR	LDELTP1
+;
+LDELT
+	CALL	FDLTEX
+	JR	NZ,LDUPP1
+	LD	(PTEXT),HL
+	CALL	RECLAT
+LDELTP1	CALL	CLS
+	JP	AFPAGE
+;
+FDLTEX
+	LD	HL,TEXT
+	CALL	FDPTEX
+	RET	NZ
+	PUSH	HL
+	INC	HL
+	CALL	FDPTEX
+	INC	HL
+	INC	HL
+	POP	DE
+	RET	NZ
+	SBC	HL,DE
+	LD	B,H
+	LD	C,L
+	ADD	HL,DE
+	EX	DE,HL
+	CP	A
+	RET
+;
+DELPTEX
+	LD	HL,TEXT
+DELPTXL1 CALL	FDPTEX
+	JR	NZ,LDELTP1
+	LD	(PTEXT),HL
+	LD	BC,2
+	CALL	RECLAT
+	JR	DELPTXL1
+;
+FDPTEX
+	LD	DE, WORKZ	; temporary buffer
+	EX	DE,HL
+	LD	(HL),"@
+	INC	HL
+	LD	(HL),13
+	DEC	HL
+	EX	DE,HL
+FDPTEXL1 CALL	FDSTR
+	RET	NZ
+	DEC	HL
+	LD	A,(HL)
+	CP	13
+	INC	HL
+	INC	HL
+	JR	NZ,FDPTEXL1
+	LD	A,(HL)
+	CP	13
+	JR	NZ,FDPTEXL1
+	DEC	HL
+	RET
+TESPOT
+	PUSH	HL
+	PUSH	BC
+	LD	BC,(PTEXT)
+	SBC	HL,BC
+	JR	NC,TESPOTP1
+	EX	DE,HL
+	SBC	HL,BC
+	EX	DE,HL
+	CCF
+TESPOTP1	POP	BC
+	POP	HL
+	RET
+
+;
+; Find a label ??
+;
+FDLAB
+	LD	HL,TEXT
+	LD	B,^
+FDLABL1
+	LD	A,(HL)
+	CP	1
+	RET	C
+	BIT	7,A
+	JR	NZ,FDLABP1
+	PUSH	DE
+	CALL	RDSTR
+	POP	DE
+	RET	Z
+FDLABP1	LD	A,13
+	CPIR
+	JR	FDLABL1
+;
+AFCUR
+	PUSH	AF
+	LD	A,(CURPO)	; cursor position
+	LD	(SPO+1),A	; screen write pos line
+	LD	A,8
+	LD	(SPO),A		; Screen write coordinates
+	POP	AF
+	JP	OC
+;
+AFPAGE
+	CALL	CANSEL
+	LD	A,1
+	JR	Z,AFPA1
+	LD	HL,(PTEXT)
+	LD	BC,TEXT
+	AND	A
+	SBC	HL,BC
+	LD	A,17
+	CALL	Z,POMSG
+	LD	A,4
+AFPA1
+	LD	(IX+CP),A	; cursor position
+AFPA2
+	LD	HL,(PTEXT)
+	LD	A,(CURPO)	; cursor position
+AFPA3	LD	(SPO+1),A	; screen write pos line
+	XOR	A
+	LD	(SPO),A		; clear screen write pos column
+AFPL1
+	AND	A
+	EX	AF,AF
+	CALL	AFLIN1
+	AND	A
+	JR	Z,AFPP1
+	LD	A,(SPO+1)	; screen write pos line
+	CP	25
+	JR	C,AFPL1
+	BIT	7,(IX+F3)
+	JR	NZ,AFPL1
+AFPP1
+	BIT	7,(IX+F3)
+	JR	NZ,AFPP2
+	LD	A,(SPO+1)	; screen write pos line
+	CP	25
+	RET	Z
+	LD	B,A
+	JP	EFLIN
+AFPP2
+	CALL	AFFP
+	JP	MONIT
+
+;
+; Print a line
+;
+AFLIN
+	LD	HL,(PTEXT)
+	LD	A,(CURPO)	; cursor position
+	LD	(SPO+1),A	; screen write pos line
+AFLIN1	XOR	A
+	LD	(SPO),A		; screen write pos column
+AFLIN2	LD	(LTAB),A
+	XOR	A
+	LD	E,A
+	EX	AF,AF
+AFLIL1
+	INC	E
+	LD	A,(HL)
+	CP	^		; eos
+	JR	NZ,AFLIP5
+	DEC	E
+	JR	Z,AFLIP6
+	LD	A,(LTAB)
+	LD	C,40
+	ADD	A,C
+	LD	C,A
+	CALL	TAB
+AFLIP6	LD	A,";
+	JR	AFLIP1
+AFLIP5
+	BIT	7,A
+	JR	Z,AFLIP1
+	EX	AF,AF
+	JR	C,AFLIP2
+	LD	A,(LTAB)
+	LD	C,9
+	ADD	A,C
+	LD	C,A
+	CALL	TAB
+	SCF
+	EX	AF,AF
+	CALL	OC
+	LD	A,(LTAB)
+	LD	C,14
+	ADD	A,C
+	LD	C,A
+	CALL	TAB
+	INC	HL
+	JR	AFLIL1
+AFLIP1
+	CALL	OC
+	LD	A,(HL)
+	INC	HL
+	CP	32
+	RET	C
+	JR	AFLIL1
+AFLIP2	EX	AF,AF
+	JR	AFLIP1
+;
+CREWO
+	LD	HL,(PTEXT)
+	CALL	NEXLIN
+	RET	C
+CREWO1	CALL	CANW
+	CALL	AFLIN
+	LD	HL,WORK+FM-1
+	LD	(HL),13
+	INC	HL
+	LD	(HL),0
+	CALL	CANS
+	LD	HL,WORK
+	CALL	NEXLIN
+	DEC	HL
+	LD	A,C
+	CP	10
+	JR	C,CREWP1
+	LD	HL,WORK+9
+CREWP1	SET	7,(HL)
+	LD	(PTWO),HL
+	AND	A
+	RET
+;
+ADDLIN
+	PUSH	HL
+	CALL	NEXLIN
+	LD	HL,(PTEXT)
+	CALL	SPACES
+	POP	HL
+	LDIR
+	EX	DE,HL
+	RET
+BAKLIN
+	DEC	HL
+	LD	A,(HL)
+	INC	HL
+	CP	1
+	RET	C
+	DEC	HL
+BAKLL1
+	DEC	HL
+	LD	A,(HL)
+	CP	13
+	JR	Z,BAKLP1
+	AND	A
+	JR	NZ,BAKLL1
+BAKLP1	INC	HL
+	RET
+;
+RDWO2
+	LD	DE, WORKZ	; temporary buffer
+	JR	RDWO21
+RDWO
+	LD	HL,WORK
+RDWO1
+	LD	DE,WORKZ
+	CALL	ELISPA
+	LD	C,0
+	LD	A,(HL)
+	CP	";
+	JP	Z,STCM1
+	CP	"@
+	JP	Z,RDWP9
+	CP	"*
+	SCF
+	RET	Z
+	PUSH	HL
+	CALL	RDMNE
+	POP	BC
+	JR	Z,RDWP31
+	LD	H,B
+	LD	L,C
+	LD	A,(HL)
+	CALL	TTEXA
+	JR	C,RDWPE
+	PUSH	DE
+	CALL	RDRGT
+	POP	DE
+	JR	Z,RDWPE
+	LD	C,9
+RDWL1
+	LD	A,(HL)
+	CP	33
+	JR	C,RDWP3
+	INC	HL
+	DEC	C
+	JR	Z,RDWP4
+	LD	(DE),A
+	INC	DE
+	JR	RDWL1
+RDWP4	INC	C
+	JR	RDWL1
+RDWP3
+	CALL	ELISPA
+	JR	Z,RDWPF
+	CP	";
+	JR	Z,STCM2
+	CALL	RDMNE
+	JR	NZ,RDWPE
+RDWP31	LD	(DE),A
+	INC	DE
+RDWO21
+	CP	197
+	LD	C,-14
+	JR	Z,RDWP6
+RDWL2
+	CALL	ELISPA
+	CP	";
+	JR	Z,RDWTL
+RDWL4
+	LD	A,(HL)
+	CP	13
+	JR	Z,RDWTL
+	CP	33
+	JR	C,RDWL2
+	LDI
+	CP	34
+	JR	NZ,RDWL4
+	LD	A,(HL)
+	CP	13
+	JR	Z,RDWPE
+	LDI
+RDWL3
+	LD	A,(HL)
+	CP	13
+	JR	Z,RDWL2
+	CP	",
+	JR	Z,RDWL4
+	LDI
+	CP	34
+	JR	Z,RDWL4
+	JR	RDWL3
+RDWTL
+	LD	A,C
+	NEG
+	CP	40
+	JR	NC,RDWP7
+	LD	A,(HL)
+	CP	";
+	JR	Z,STCM2
+RDWPF
+	EX	DE,HL
+	LD	(HL),13
+	INC	HL
+	LD	(HL),0
+	LD	HL,WORKZ
+	LD	A,(HL)
+	CP	14
+	CCF
+	RET	C
+	EX	DE,HL
+RDWPE
+	SET	7,(HL)
+	LD	(PTWO),HL
+	AND	A
+	RET
+RDWP6
+	CALL	ELISPA
+	JR	Z,RDWPF
+RDWL5
+	LDI
+	LD	A,(HL)
+	CP	13
+	JR	Z,RDWTL
+	JR	RDWL5
+RDWP7
+;PING
+	JR	RDWPE
+RDWP9
+	INC	HL
+	LD	A,(HL)
+	INC	HL
+	CP	13
+	JR	NZ,RDWPE
+	DEC	HL
+	DEC	HL
+	SCF
+	RET
+STCM1
+	LD	C,78
+	JR	STCMP1
+STCM2
+	LD	C,38
+STCMP1	LD	B,0
+	LD	A,^
+	LD	(DE),A
+	INC	DE
+	INC	HL
+	LDIR
+	JR	RDWPF
+;
+RDMNE
+	PUSH	DE
+	EX	DE,HL
+	LD	HL,TBMN
+	CALL	RDTB
+	EX	DE,HL
+	POP	DE
+	SET	7,A
+	RET
+;
+RDRGT
+	PUSH	HL
+	LD	C,0
+	EX	DE,HL
+	CALL	FR16B
+	POP	HL
+	RET	Z
+	PUSH	HL
+	EX	DE,HL
+	CALL	FR8B
+	POP	HL
+	RET
+;
+RDTB
+	LD	C,0
+RDTL1
+	PUSH	DE
+	CALL	RDLIN
+	JR	Z,RDTP1
+	POP	DE
+RDTL2
+	BIT	7,(HL)
+	INC	HL
+	JR	Z,RDTL2
+	INC	C
+	LD	A,(HL)
+	AND	A
+	JR	NZ,RDTL1
+	INC	DE
+	INC	A
+	RET
+RDTP1
+	POP	HL
+	LD	A,C
+	RET
+RDLIN
+	LD	A,(DE)
+	RES	5,A
+	CP	(HL)
+	RET	NZ
+	INC	DE
+	INC	HL
+	BIT	7,(HL)
+	JR	Z,RDLIN
+	LD	B,(HL)
+	RES	7,B
+	LD	A,(DE)
+	RES	5,A
+	CP	B
+	RET	NZ
+	INC	DE
+	LD	A,(DE)
+	JP	TSEP2
+;
+;
+ASSBLK
+	SET	6,(IX+F3)	; bloc assembly mode
+
+;
+; Entry:
+;  C : assembly flags
+;
+ASSEMB
+	LD	HL,0
+	LD	(ENTP),HL	; clear
+	LD	(IX+LPPO-PC),L
+	LD	(EDCSV),HL
+	LD	(IX+F0),C
+	CALL	USEMEM		; Clear symbols table
+	LD	A,(DE)
+	INC	DE
+	CP	13
+	JR	Z,ASSP1
+	CALL	TSEP1
+	JP	Z,ERR0
+	SET	5,(IX+F1)
+	LD	HL,STRG2
+	EX	DE,HL
+	LD	BC,10
+	LDIR
+	LD	A,13
+	LD	(DE),A
+ASSP1
+	BIT	0,(IX+F0)	; 'Use the screen memory' bit
+	CALL	NZ,USESCR
+	BIT	3,(IX+F0)	; if 'generate code on disk' flag
+	CALL	NZ,SETF1	; then set also the 'generate code in memory' flag
+	CALL	SETORG
+	LD	(BORG),HL
+	BIT	3,(IX+F0)	; 'generate code on disk' flag
+	CALL	NZ,CREATF
+	CALL	SETAV		; init PC and LPC
+	PUSH	HL
+	CALL	CANSEL
+	LD	A,17
+	CALL	POMSG
+	BIT	6,(IX+F3)	; bloc assembly mode ?
+	LD	DE,STRG2
+	CALL	NZ,LDBLK
+	SET	4,(IX+F1)
+	SET	1,(IX+F3)	; assembly phase
+	CALL	COMPIL		; Parse source code
+	IF	VRS&1
+	LD	HL,(PC)
+	LD	(TBR),HL	; Set up the 'relocation table' address to point after the generated code
+	LD	HL,(LPC)
+	LD	(HORG),HL
+	END
+	BIT	0,(IX+F0)	; 'Use the screen memory' bit
+	JR	NZ,ASSBP3
+	CALL	PRTL
+	DEFM	Pass 1: 0 Errors
+	DEFB	13,^
+ASSBP3
+	RES	4,(IX+F1)
+	RES	6,(IX+F1)
+	BIT	5,(IX+F1)
+	LD	DE,STRG2
+	CALL	NZ,LDBLK
+	POP	HL
+	CALL	SETAV		; init PC and LPC
+	CALL	COMPIL		; Parse source code
+	BIT	0,(IX+F0)	; 'Use the screen memory' bit
+	CALL	NZ,CLSCR
+	CALL	PRTL
+	DEFB	13
+	DEFM	Pass 2: 0 Errors
+	DEFB	13,13,^
+	BIT	3,(IX+F0)	; 'generate code on disk' flag
+	JR	NZ,ASSPF1
+	CALL	PRTL
+	DEFM	End of code:
+	DEFB	^
+	LD	HL,(PC)
+	IF	VRS&1
+	BIT	7,(IX+F0)	; The 'generate relocation table' flag
+	JR	Z,ASSP4
+	LD	HL,(TBR)
+	LD	(HL),^		; put the "End of relocation table" marker
+	INC	HL
+ASSP4
+	END
+	LD	(EDCSV),HL	; remember object code end
+	EX	DE,HL
+	CALL	OUTNB
+	CALL	ORT		; Print a CR
+	LD	HL,(ENTP)
+	LD	(ENTSV),HL	; save object code entry point
+	BIT	1,(IX+F0)	; 'generate code in memory' flag
+	CALL	NZ,RESENT
+	EX	DE,HL
+	LD	A,D
+	OR	E
+	RET	Z
+	CALL	PRTL
+	DEFM	Executes:
+	DEFB	^
+	CALL	OUTNB
+	JP	ORT		; Print a CR
+ASSPF1
+	LD	A,(CTCH)
+	AND	A
+	JR	Z,ASSPF11
+	CALL	CANF
+	CALL	ORT		; Print a CR
+	CALL	CANS
+ASSPF11	CALL	OUTCLOSE
+RESENT	LD	HL,0
+	LD	(ENTP),HL
+	RET
+
+;
+; Return in HL the ORG
+;
+SETORG
+	BIT	5,(IX+F1)
+	JR	Z,STORGP1
+	CALL	INPUT3
+	DEFM	Object code address?
+	DEFB	^
+	JR	Z,SETORG
+	LD	H,B
+	LD	L,C
+	CALL	TSLOC
+	CALL	TSHM
+	JP	C,ERR8
+SETF1	SET	1,(IX+F0)	; 'generate code in memory' flag
+	RET
+STORGP1
+	BIT	1,(IX+F0)	; 'generate code in memory' flag
+	JR	NZ,CPORG
+	CALL	SRORG		; search 'ORG' in code
+	RET	Z
+CPORG				; generate a valid ORG
+	LD	HL,(RTOP)
+	INC	HL
+	BIT	0,(IX+F0)	; 'Use the screen memory' bit
+	RET	NZ
+	PUSH	HL
+	LD	HL,TEXT
+	CALL	FDLEN
+	POP	HL
+	INC	B
+	INC	B
+	SRL	B
+	RR	C
+	SRL	B
+	RR	C
+	ADD	HL,BC
+	CALL	TSHM
+	CALL	C,USESCR
+	EX	DE,HL
+	CALL	PRTL
+	DEFB	13
+	DEFM	Using :
+	DEFB	^
+	CALL	OUTNB
+	EX	DE,HL
+	JP	ORT		; Print a CR
+
+;
+; Search the source code for an 'ORG' keyword ?
+;
+SRORG
+	LD	DE,TEXT
+SRORGL1
+	LD	A,(DE)
+	INC	DE
+	CP	1
+	RET	C		; return if A is null with Z flag off
+	CP	^		; end of source code
+	JR	NZ,SRORGP2
+SRORGP3	PUSH	BC
+	CALL	DEQU		; read a line
+	POP	BC
+	JR	SRORGL1
+SRORGP2	CP	200
+	JR	Z,SRORGP1	; failed
+	CP	199
+	JR	NC,SRORGP3
+	INC	A
+	RET
+SRORGP1	LD	HL,65526	; signal: not found
+	RET
+;
+CREATF
+	PUSH	HL
+	LD	DE,2080
+	ADD	HL,DE
+	CALL	TSHM
+	JP	C,ERR8
+	EX	(SP),HL
+	PUSH	HL
+	CALL	PRTL
+	DEFM	File name?
+	DEFB	13,^
+	CALL	INPUT2
+	POP	HL
+	CALL	OUTOPEN
+	POP	HL
+	LD	(LOCAS),HL
+	LD	(IX+CH),0
+	RET
+;
+SETAV
+	LD	(PC),HL
+	LD	(LPC),HL
+	RET
+
+;
+; Clear symbols table
+;
+USEMEM
+	LD	HL,(RTOP)
+	LD	(END),HL	; reset DAMS brk address
+	JR	USESCRP1
+USESCR
+	LD	HL,#C000
+	SET	0,(IX+F0)	; 'Use the screen memory' bit
+USESCRP1 LD	(VAR),HL	; Set the symbols table address
+	LD	(HL),0		; clear it
+	RET
+;
+COMPIL
+	LD	HL,TEXT
+	LD	(PTWO),HL
+	CALL	COMPTEX
+	BIT	2,(IX+F1)	; another file to assemble ?
+	RET	Z
+	RES	2,(IX+F1)
+	LD	DE,(NAMEAD)
+	CALL	LDBLK
+	JR	COMPIL
+;
+COMPTEX
+	CALL	CODLI
+	RET	NC
+	BIT	2,(IX+F0)	; 'print assembly listing' bit
+	CALL	NZ,AFCOD
+	BIT	3,(IX+F0)	; 'generate code on disk' flag
+	CALL	NZ,PUTCOD
+	LD	A,R
+	CP	9
+	JR	NC,COMPTEX
+	CALL	BREAK
+	JR	NZ,COMPTEX
+	JP	ERR10
+;
+PUTCOD
+	LD	A,B
+	OR	C
+	RET	Z
+	BIT	4,(IX+F1)
+	JR	NZ,PUTCODP1
+	CALL	CANF
+	AND	A
+	SBC	HL,BC
+PUTCODL1
+	LD	E,(HL)
+	INC	HL
+	CALL	HEX1
+	CALL	TSFLF
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,PUTCODL1
+	CALL	CANSEL
+PUTCODP1
+	LD	DE,(LOCAS)
+	LD	(PC),DE
+	RET
+TSFLF
+	LD	A,(CTCH)
+	INC	A
+	INC	A
+	LD	(CTCH),A
+	CP	32
+	RET	C
+	XOR	A
+	LD	(CTCH),A
+	JP	ORT		; Print a CR
+;
+AFCOD
+	BIT	4,(IX+F1)
+	RET	NZ
+	BIT	0,(IX+F0)	; 'Use the screen memory' bit
+	JR	Z,AFCODP1
+	BIT	7,(IX+F3)
+	RET	Z
+AFCODP1	PUSH	BC
+	PUSH	HL
+	CALL	AFCODOB
+	LD	C,16
+	CALL	TAB
+	LD	HL,(PTWO)
+	CALL	BAKLIN
+	LD	A,16
+	CALL	AFLIN2
+	BIT	7,(IX+F3)
+	CALL	Z,KEY3
+	POP	HL
+	POP	BC
+	RET
+AFCODOB
+	LD	A,B
+	OR	C
+	RET	Z
+	LD	A,(STOR)
+	CP	72
+	RET	Z
+	CP	70
+	RET	Z
+	LD	HL,(LPC)
+	AND	A
+	SBC	HL,BC
+	EX	DE,HL
+	CALL	OUTNB
+	LD	HL,(PC)
+	AND	A
+	SBC	HL,BC
+	LD	A,32
+	CALL	OC
+AFCODBL1
+	LD	E,(HL)
+	INC	HL
+	CALL	HEX1
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,AFCODBL1
+	RET
+;
+CODLI
+	LD	DE,(PTWO)
+	LD	A,(DE)
+	INC	DE
+	LD	(PTWO),DE
+	AND	A
+	RET	Z
+	CP	^
+	JR	Z,CPNEX1
+	BIT	7,A
+	JR	NZ,CODLIP1
+	CP	"@
+	JR	Z,CPNEX1
+	CP	"*
+	JR	Z,CODLIP3
+	DEC	DE
+	CALL	LABEL
+	LD	A,(DE)
+	INC	DE
+	CP	13
+	JR	Z,CODLIF1
+	CP	^
+	JR	Z,CPNEX1
+	CP	|
+	JP	C,ERR4
+CODLIP1
+	CALL	TRAITC
+	LD	DE,(PC)
+	LD	(PC),HL
+	PUSH	HL
+	AND	A
+	SBC	HL,DE
+	LD	B,H
+	LD	C,L
+	LD	HL,(LPC)
+	ADD	HL,BC
+	LD	(LPC),HL
+	POP	HL
+	PUSH	HL
+	CALL	TESTHL
+	POP	HL
+	LD	DE,(PTWO)
+	DEC	DE
+	LD	A,(DE)
+	INC	DE
+	CP	13
+	SCF
+	RET	Z
+CPNEX
+	PUSH	BC
+	CALL	DEQU
+	POP	BC
+	LD	(PTWO),DE
+	SCF
+	RET
+CPNEX1	LD	BC,0
+	JR	CPNEX
+;
+CODLIP3
+	LD	A,(DE)
+	RES	5,A
+	CP	"F
+COMP31	JP	NZ,ERR0
+	INC	DE
+	CALL	TSEP1
+	INC	DE
+	JR	NZ,COMP31
+	BIT	5,(IX+F1)
+	JP	Z,ERR5
+	LD	(NAMEAD),DE	; store next file's name
+	SET	2,(IX+F1)	; set 'another file to assemble' flag
+	JR	CPNEX1
+;
+CODLIF1
+	LD	(PTWO),DE
+	LD	BC,0
+	SCF
+	RET
+;
+TRAITC
+	IF	VRS&1
+	RES	1,(IX+F1)
+	END
+	LD	HL,(PC)
+	SUB	|
+	LD	(STOR),A
+	CP	29
+	JR	NC,TRCP1
+	PUSH	AF
+	PUSH	HL
+	CALL	FDOPS
+	POP	HL
+	LD	(PTWO),DE
+	POP	DE
+	LD	A,C
+	BIT	7,B
+	JR	NZ,TRCP5
+	BIT	7,C
+	JP	Z,TRAIT2
+	INC	A
+	JP	Z,TRAIT2
+	RES	7,C
+	LD	A,C
+	RES	4,C
+	JR	TRCP6
+TRCP5
+	CP	^
+	JR	Z,TRCP51
+	BIT	7,A
+	JR	Z,TRCP51
+	XOR	B
+	BIT	4,A
+	JP	NZ,ERR0
+	RES	4,C
+TRCP51	RES	7,B
+	LD	A,B
+	RES	4,B
+TRCP6	PUSH	AF
+	RLA
+	OR	#DF
+	RES	1,A
+	LD	(HL),A
+	SET	3,(IX+F1)
+	INC	HL
+	PUSH	HL
+	CALL	TRAIT2
+	RES	3,(IX+F1)
+	POP	DE
+	POP	AF
+	BIT	3,A
+	RET	NZ
+	PUSH	HL
+	LD	HL,(DEPL)
+	LD	A,L
+	LD	BC,|
+	ADD	HL,BC
+	INC	H
+	DEC	H
+	JP	NZ,ERR2
+	POP	HL
+	LD	(HL),A
+	SCF
+	SBC	HL,DE
+	ADD	HL,DE
+	INC	HL
+	JR	Z,TRCP7
+	INC	DE
+	LD	C,(HL)
+	LD	A,(DE)
+	LD	(HL),A
+	LD	A,C
+	LD	(DE),A
+TRCP7	INC	HL
+	RET
+TRCP1
+	CP	33
+	JR	NC,TRCP2
+	PUSH	HL
+	PUSH	AF
+	CALL	FDKPS
+	LD	(PTWO),DE
+	POP	AF
+	POP	HL
+	LD	DE,ERR0
+	PUSH	DE
+	LD	D,0
+	CP	29
+	JP	Z,DJR
+	CP	30
+	JP	Z,DCALL
+	CP	31
+	JP	Z,DRET
+	JP	DJP
+;
+TRCP2
+	CP	67
+	JR	NC,TRCP3
+	SUB	33
+	CP	13
+	JR	C,TRCP21
+	LD	(HL),#ED
+	INC	HL
+TRCP21
+	PUSH	HL
+	LD	C,A
+	LD	B,0
+	LD	HL,TBAS1
+	ADD	HL,BC
+	LD	C,(HL)
+	POP	HL
+	LD	(HL),C
+	INC	HL
+	CALL	TENDLI
+	JR	TRCP31
+;
+TRCP3
+	SUB	67
+	EXX
+	LD	E,A
+	LD	D,0
+	LD	HL,T3
+	ADD	HL,DE
+	LD	E,(HL)
+	ADD	HL,DE
+	EX	DE,HL
+	CALL	JPDE
+TRCP31	LD	(PTWO),DE
+	RET
+;
+TRAIT2
+	LD	A,D
+	LD	DE,ERR0
+	PUSH	DE
+	LD	D,0
+	AND	A
+	JP	Z,DLD
+	CP	3
+	JR	C,DINC
+	CP	11
+	JR	C,DARR
+	CP	13
+	JP	C,DPIL
+	CP	16
+	JP	C,DBIT
+	CP	23
+	JP	C,DROT
+	CP	25
+	JP	C,DIO
+	JP	Z,DRST
+	CP	26
+	JP	Z,DDJN
+	CP	27
+	JR	Z,TRAI21
+	INC	C
+	RET	NZ
+	DEC	C
+	LD	A,B
+	CP	64
+	RET	NZ
+	LD	A,(PILCA)
+	CP	3
+	RET	NC
+	LD	B,A
+TRAI21	JP	FTTB
+;
+DINC
+	INC	C
+	RET	NZ
+	ADD	A,3
+	LD	E,A
+	LD	A,B
+	CP	8
+	JP	C,BDR1
+	CP	12
+	RET	NC
+	DEC	E
+	LD	A,E
+	CP	3
+	JP	Z,BDR4
+	LD	E,11
+	JP	BDR4
+;
+DARR
+	LD	E,A
+	LD	A,B
+	CP	10
+	JR	Z,DARRP7
+	LD	A,E
+	SUB	3
+	LD	E,A
+	CP	4
+	JR	NC,DARRP1
+	CP	2
+	JR	Z,DARRP1
+	LD	A,B
+	CP	7
+	RET	NZ
+	LD	B,C
+	LD	A,E
+	JR	DARRP2
+DARRP1
+	INC	C
+	RET	NZ
+DARRP2
+	LD	C,A
+	RLCA
+	RLCA
+	RLCA
+	ADD	A,|
+	LD	E,A
+	LD	A,B
+	CP	8
+	JP	C,BDR3
+	CP	64
+	RET	NZ
+	LD	B,C
+	LD	E,198
+	INC	D
+	JP	BDR1
+DARRP7
+	LD	A,C
+	AND	248
+	CP	8
+	LD	A,C
+	JR	Z,DARRP71
+	CP	138
+	RET	NZ
+	LD	A,E
+	CP	3
+	RET	NZ
+	POP	AF
+	LD	(HL),#29
+	INC	HL
+	RET
+DARRP71
+	AND	7
+	CP	4
+	RET	NC
+	BIT	3,(IX+F1)
+	JR	Z,DARRP72
+	CP	2
+	RET	Z
+DARRP72	LD	B,C
+	LD	A,E
+	LD	E,9
+	CP	3
+	JP	Z,BDR4
+	LD	E,74
+	BIT	3,(IX+F1)
+	RET	NZ
+	LD	(HL),#ED
+	INC	HL
+	CP	4
+	JP	Z,BDR4
+	LD	E,66
+	CP	6
+	JP	Z,BDR4
+	RET
+;
+DPIL
+	LD	E,197
+	CP	11
+	JR	Z,DPILP1
+	LD	E,193
+DPILP1	INC	C
+	RET	NZ
+	LD	A,B
+	AND	248
+	CP	8
+	RET	NZ
+	LD	A,B
+	AND	7
+	CP	3
+	RET	Z
+	JR	C,BDR4
+	DEC	B
+	JR	BDR4
+;
+DBIT
+	LD	E,A
+	LD	A,B
+	CP	64
+	RET	NZ
+	CALL	FT8B
+	CP	8
+	JP	NC,ERR3
+	LD	B,A
+	LD	A,C
+	CP	8
+	RET	NC
+	LD	A,E
+	SUB	12
+	RRCA
+	RRCA
+	LD	E,A
+	LD	(HL),#CB
+	INC	HL
+	JR	BDR2
+;
+DROT
+	SUB	16
+	RLCA
+	RLCA
+	RLCA
+	CP	48
+	JR	NZ,DROTP1
+	LD	A,56
+DROTP1
+	LD	E,A
+	INC	C
+	RET	NZ
+	LD	A,B
+	CP	8
+	RET	NC
+	LD	(HL),#CB
+	INC	HL
+	JR	BDR3
+;
+DIO
+	SUB	23
+	LD	E,A
+	LD	A,B
+	JR	Z,DIOP1
+	LD	B,C
+	LD	C,A
+	LD	A,B
+DIOP1
+	CP	8
+	RET	NC
+	CP	6
+	RET	Z
+	LD	A,C
+	CP	33
+	JR	NZ,DIOP2
+	LD	(HL),#ED
+	INC	HL
+	SET	6,E
+	JR	BDR1
+DIOP2
+	LD	A,B
+	CP	7
+	RET	NZ
+	LD	A,C
+	CP	96
+	RET	NZ
+	LD	A,219
+	INC	D
+	DEC	E
+	JR	NZ,BDBTP7
+	RES	3,A
+	JR	BDBTP7
+;
+BDR1
+	LD	C,0
+BDR2
+	LD	A,B
+	RLCA
+	RLCA
+	RLCA
+	OR	C
+	JR	BDBTP5
+BDR3
+	LD	A,B
+	JR	BDBTP5
+BDR4
+	LD	A,B
+	AND	3
+	RLCA
+	RLCA
+	RLCA
+	RLCA
+BDBTP5
+	OR	E
+BDBTP7	LD	(HL),A
+	POP	AF
+	INC	HL
+	INC	D
+	DEC	D
+	RET	Z
+	DEC	D
+	JR	NZ,BDBTP6
+	CALL	FT8B
+	LD	(HL),A
+	INC	HL
+	RET
+BDBTP6
+	LD	BC,(PILCA)
+	IF	VRS&1
+	BIT	7,(IX+F0)	; 'generate relocation table' bit
+	CALL	NZ,RLG		; Allocate relocation table
+	END
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	RET
+;
+DLD
+	LD	A,B
+	CP	8
+	JR	NC,DLDP2
+	LD	A,C
+	CP	8
+	LD	E,64
+	JR	C,BDR2
+	INC	D
+	CP	64
+	LD	E,6
+	JR	Z,BDR1
+	JR	DLDP5
+DLDP2
+	CP	12
+	JR	NC,DLDP3
+	LD	A,C
+	CP	64
+	JR	Z,LDRRNN
+	CP	96
+	JR	NZ,DLDP5
+	LD	A,B
+	CP	10
+	JR	Z,DLDP5
+	JR	LDRRM
+DLDP3
+	CP	96
+	JR	NZ,DLDP5
+	LD	A,C
+	CP	12
+	JR	NC,DLDP5
+	CP	8
+	JR	C,DLDP5
+	CP	10
+	JR	NZ,LDMRR
+DLDP5
+	JP	FTTB
+;
+LDMRR
+	LD	B,C
+	LD	E,67
+	JR	DLDP7
+LDRRM	LD	E,75
+DLDP7	LD	(HL),#ED
+	INC	HL
+	JR	DLDP8
+LDRRNN	LD	E,1
+DLDP8	LD	D,2
+	JR	BDR4
+;
+DRST
+	INC	C
+	RET	NZ
+	LD	A,B
+	CP	64
+	RET	NZ
+	BIT	4,(IX+F1)
+	JR	NZ,DRSTP1
+	CALL	FT8B
+	RRCA
+	RRCA
+	RRCA
+	CP	8
+	JP	NC,ERR3
+DRSTP1	LD	B,A
+	LD	E,199
+	JP	BDR1
+;
+DDJN
+	INC	C
+	RET	NZ
+	LD	A,B
+	CP	64
+	RET	NZ
+	LD	A,16
+	JR	DJRP1
+;
+DJR
+	LD	A,B
+	CP	64
+	JR	NZ,DJRP2
+	INC	C
+	RET	NZ
+	LD	A,24
+	JR	DJRP1
+DJRP2
+	LD	A,C
+	CP	64
+	RET	NZ
+	LD	A,B
+	CP	4
+	RET	NC
+	RLCA
+	RLCA
+	RLCA
+	OR	32
+DJRP1	LD	(HL),A
+	INC	HL
+	CALL	FTREL
+	LD	(HL),A
+	INC	HL
+	POP	AF
+	RET
+;
+DJP
+	LD	A,B
+	CP	64
+	JR	NZ,DJPP1
+	LD	A,195
+	JR	DCALP2
+DJPP1
+	LD	E,194
+	CP	8
+	JR	C,DCALP3
+	RES	3,A
+	BIT	7,B
+	JR	Z,DJPP2
+	RLA
+	OR	#DF
+	RES	1,A
+	LD	(HL),A
+	INC	HL
+	LD	A,B
+	AND	7
+DJPP2	CP	6
+	RET	NZ
+	LD	(HL),233
+DJPP5	INC	HL
+	POP	AF
+	RET
+;
+DCALL
+	LD	E,196
+	LD	A,B
+	CP	64
+	JR	NZ,DCALP1
+	INC	C
+	RET	NZ
+	LD	A,205
+DCALP2	LD	D,2
+	JP	BDBTP7
+DCALP1	CP	8
+	RET	NC
+DCALP3	LD	A,C
+	CP	64
+	RET	NZ
+	LD	D,2
+	JP	BDR1
+;
+DRET
+	INC	B
+	JR	Z,DRETP1
+	DEC	B
+	INC	C
+	RET	NZ
+	LD	A,B
+	CP	8
+	LD	E,192
+	JP	C,BDR1
+	RET
+DRETP1
+	LD	(HL),201
+	JR	DJPP5
+;
+FTREL
+	BIT	4,(IX+F1)
+	JR	Z,FTREL1
+	XOR	A
+	RET
+FTREL1
+	PUSH	HL
+	BIT	1,(IX+F0)	; 'generate code in memory' flag
+	JR	Z,FTRELP1
+	LD	HL,(LPC)
+	INC	HL
+FTRELP1	INC	HL
+	EX	DE,HL
+	LD	HL,(PILCA)
+	AND	A
+	SBC	HL,DE
+	LD	A,L
+	LD	DE,|
+	ADD	HL,DE
+	INC	H
+	DEC	H
+	POP	HL
+	RET	Z
+	JP	ERR2
+;
+	IF	VRS&1
+;
+PORG	DEFW
+HORG	DEFW
+LAD	DEFW
+TBR	DEFW			; Relocation table pointer
+
+;
+; Allocate relocation table ?
+;
+RLG
+	BIT	4,(IX+F1)
+	RET	NZ
+	PUSH	HL
+	LD	HL,(PORG)
+	SCF
+	SBC	HL,BC
+	POP	HL
+	RET	NC
+	PUSH	HL
+	OR	A
+	LD	HL,(HORG)
+	SBC	HL,BC
+	POP	HL
+	RET	C
+	BIT	1,(IX+F1)
+	RET	NZ;PING
+	PUSH	DE
+	PUSH	HL
+	LD	DE,(PC)
+	AND	A
+	SBC	HL,DE
+	LD	DE,(LPC)
+	ADD	HL,DE
+	LD	DE,(LAD)
+	INC	HL
+	INC	HL
+	LD	(LAD),HL
+	DEC	HL
+	DEC	HL
+	AND	A
+	SBC	HL,DE
+	INC	H
+	DEC	H
+	JP	NZ,ERR4
+	LD	A,L
+	LD	HL,(TBR)
+	LD	(HL),A
+	INC	HL
+	LD	(TBR),HL
+	LD	BC,(PORG)
+	LD	HL,(PILCA)
+	AND	A
+	SBC	HL,BC
+	LD	B,H
+	LD	C,L
+	POP	HL
+	POP	DE
+	RET
+	END
+;
+T3
+	DEFB	DDFB-T3
+	DEFB	DDFW-T3-1
+	DEFB	DDFM-T3-2
+	DEFB	DDFS-T3-3
+	DEFB	DEQU-T3-4
+	DEFB	DORG-T3-5
+	DEFB	DENT-T3-6
+	DEFB	DIFM-T3-7
+	DEFB	DELS-T3-8
+	DEFB	DEND-T3-9
+
+;
+; 'DEFB' keyword
+;
+DDFB
+	CALL	SCANL		; Arithmetic expression parser
+	CALL	FT8B
+	LD	(HL),A
+	INC	HL
+	LD	A,(DE)
+	INC	DE
+	CALL	SEPED
+	RET	Z
+	JR	DDFB
+
+;
+; 'DEFW' keyword
+;
+DDFW
+	CALL	SCANL		; Arithmetic expression parser
+	CALL	BDBTP6
+	LD	A,(DE)
+	INC	DE
+	CALL	SEPED
+	RET	Z
+	JR	DDFW
+
+;
+; 'DEFM' keyword
+;
+DDFM
+	EX	DE,HL
+DDFML1	LD	A,(HL)
+	CALL	SEPED
+	JR	Z,DDFMP1
+	LDI
+	JR	DDFML1
+DDFMP1	EX	DE,HL
+	INC	DE
+	RET
+
+;
+; 'DEFS' keyword
+;
+DDFS
+	CALL	SCANA
+	AND	A
+	ADD	HL,BC
+	JR	C,DDFSE
+	CALL	TSHM
+DDFSE	JP	C,ERR8
+	CALL	TSLOC
+	LD	A,(DE)
+	INC	DE
+	CALL	SEPED
+	RET	Z
+	LD	A,B
+	OR	C
+	RET	Z
+	PUSH	BC
+	AND	A
+	SBC	HL,BC
+	CALL	SCANL		; Arithmetic expression parser
+	CALL	FT8B
+	POP	BC
+	PUSH	DE
+	LD	(HL),A
+	LD	D,H
+	LD	E,L
+	INC	DE
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	Z,DDFSP1
+	LDIR
+DDFSP1
+	EX	DE,HL
+	POP	DE
+	JR	TENDLI
+
+;
+; 'EQU' keyword
+;
+DEQU
+	PUSH	HL
+	EX	DE,HL
+	CALL	NEXLIN
+	EX	DE,HL
+	POP	HL
+	RET
+
+;
+; 'ORG' keywork
+;
+DORG
+	CALL	SCANA
+	IF	VRS&1
+	LD	(LAD),BC
+	LD	(PORG),BC
+	END
+	BIT	1,(IX+F0)	; 'generate code in memory' flag
+	JR	Z,DORGP2
+	LD	(LPC),BC	; use LPC as the assembler write pointer
+	JR	TENDLI
+DORGP2
+	LD	H,B
+	LD	L,C
+	CALL	TSLOC
+	JR	C,TENDLI
+	LD	BC,(BORG)	; fecth previous ORG
+	SBC	HL,BC
+	ADD	HL,BC
+	JR	NC,TENDLI	; cannot assemble below previous one
+	LD	(BORG),HL	; store new ORG address
+TENDLI				; parse end of line
+	LD	A,(DE)
+	INC	DE
+	CALL	SEPED
+	RET	Z
+TENDLIP1 JP	ERR0
+
+;
+; Fecth next character,
+; EOL are unexpected
+;
+TFILI
+	LD	A,(DE)
+	INC	DE
+	CP	13
+	JR	Z,TENDLIP1	; goto error
+	RET
+
+
+;
+; The 'ENT' keyword
+;
+DENT
+	CALL	SCANL		; Arithmetic expression parser
+	LD	(ENTP),BC
+	JR	TENDLI
+
+;
+; The 'IF' keyword
+;
+DIFM
+	CALL	SCANA
+	CALL	TENDLI
+	LD	A,B
+	OR	C
+	RET	NZ
+	SET	6,(IX+F1)
+	JR	SRPSD
+DELS
+	CALL	TENDLI
+	LD	A,(FLG1)
+	XOR	64		; flip bit 6
+	LD	(FLG1),A
+	BIT	6,A
+	RET	Z
+	JR	SRPSD
+DEND
+	CALL	TENDLI
+	RES	6,(IX+F1)
+	RET
+;
+SRPSD
+	LD	A,(DE)
+	AND	A
+	RET	Z
+	INC	DE
+	CP	202
+	JR	Z,DIFM
+	CP	203
+	JR	Z,DELS
+	CP	204
+	JR	Z,DEND
+	JR	SRPSD
+;
+FTTB
+	PUSH	HL
+	LD	HL,TBAS2
+	LD	A,(STOR)
+	LD	E,A
+	LD	D,19
+FTTBL1
+	CP	(HL)
+	INC	HL
+	JR	NZ,FTTP1
+	LD	A,B
+	CP	(HL)
+	INC	HL
+	JR	NZ,FTTP2
+	LD	A,C
+	CP	(HL)
+	INC	HL
+	JR	Z,FTTP5
+	JR	FTTP3
+FTTP1	INC	HL
+FTTP2	INC	HL
+FTTP3	INC	HL
+	LD	A,E
+	DEC	D
+	JR	NZ,FTTBL1
+	JP	ERR0
+FTTP5
+	LD	E,(HL)
+	POP	HL
+	LD	A,20
+	SUB	D
+	CP	5
+	JR	NC,FTTBP6
+	LD	D,2
+	LD	A,E
+	JP	BDBTP5
+FTTBP6	CP	13
+	POP	BC
+	JR	C,FTTBP7
+	LD	(HL),#ED
+	INC	HL
+FTTBP7	LD	(HL),E
+	INC	HL
+	RET
+
+;
+; Store a label
+;
+; DE = read pointer
+;
+LABEL
+	PUSH	DE
+	LD	A,(DE)
+	LD	C,0		; clear counter
+	CP	65		; "A"
+	JP	C,ERR4
+LABL1
+	INC	DE
+	INC	C
+	LD	A,(DE)
+	CALL	TTEX
+	JR	NC,LABL1	; loop advance DE to end of label name
+	POP	HL		; HL = label
+	BIT	4,(IX+F1)
+	RET	Z
+	PUSH	DE
+	PUSH	BC
+	EX	DE,HL		; DE = label, HL = label end, C = label length
+	PUSH	DE
+	CALL	FTLAB		; search label
+	JP	Z,ERR1
+	POP	DE
+	BIT	0,(IX+F0)	; 'Use the screen memory' bit
+	PUSH	HL
+	JR	Z,LABP5
+	LD	BC,65524
+	SBC	HL,BC
+	JP	NC,ERR9
+	JR	LABP7
+LABP5	LD	BC,12
+	ADD	HL,BC
+	CALL	TSHM
+	JR	C,LABP6
+	LD	BC,(BORG)
+	SBC	HL,BC
+	JR	C,LABP7
+LABP6
+	SET	0,(IX+F0)	; 'Use the screen memory' bit
+	POP	HL
+	PUSH	DE
+	LD	DE,(VAR)	; The symbols table
+	AND	A
+	SBC	HL,DE
+	INC	HL
+	LD	A,H
+	CP	63
+	JP	NC,ERR9
+	;
+	; Copy the symbol table in screen' memory
+	;
+	LD	B,H
+	LD	C,L
+	LD	HL,#C000
+	LD	(VAR),HL	; set the symbols table address
+	EX	DE,HL
+	LDIR
+	POP	HL
+	DEC	DE
+	JR	LABP8
+LABP7
+	POP	HL
+	EX	DE,HL
+LABP8	POP	BC
+	LD	B,0
+	LD	A,8
+	SUB	C
+	LDIR
+	EX	DE,HL
+	LD	(HL),C
+	LD	C,A
+	ADD	HL,BC
+	POP	DE
+	LD	BC,(LPC)
+	LD	A,(DE)
+	CP	199
+	JR	NZ,LABP3
+	INC	DE
+	CALL	SCANA
+	LD	A,(DE)
+	CALL	SEPED
+	JP	NZ,ERR0
+LABP3
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),0
+	BIT	0,(IX+F0)	; 'Use the screen memory' bit
+	RET	NZ
+	LD	(END),HL	; advance DAMS brk address
+	RET
+;
+FDKPS
+	CALL	FDKP
+	LD	A,(DE)
+	INC	DE
+	LD	B,C
+	LD	C,^
+	CALL	SEPED
+	RET	Z
+	PUSH	BC
+	CALL	FDKP
+	LD	A,C
+	POP	BC
+	LD	C,A
+	JP	TENDLI
+;
+FDKP
+	LD	C,^
+	LD	A,(DE)
+	CALL	SEPED
+	RET	Z
+	INC	C
+	LD	(PTWO),DE
+	CALL	FTKK
+	RET	Z
+	LD	DE,(PTWO)
+	CALL	FT16
+	JP	FDOPP2
+;
+FTKK
+	LD	HL,TBKK
+FTKKL1
+	LD	A,(DE)
+	RES	5,A
+	CP	(HL)
+	INC	HL
+	JR	NZ,FTKKP1
+	INC	DE
+	CALL	TSEP1
+	JR	Z,FTKKP2
+	RES	5,A
+	CP	(HL)
+	JR	NZ,FTKKP3
+	INC	DE
+	JP	TSEP1
+FTKKP2
+	LD	A,(HL)
+	CP	"'
+	RET	Z
+FTKKP3	DEC	DE
+FTKKP1	INC	HL
+	LD	A,(HL)
+	CP	1
+	RET	C
+	INC	C
+	JR	FTKKL1
+;
+FT16
+	LD	A,(DE)
+	CP	"(
+	RET	NZ
+	INC	DE
+	LD	C,32
+	CALL	FR16B
+	PUSH	AF
+	BIT	7,C
+	JR	NZ,FT16P1
+	POP	AF
+	SET	3,C
+	RET
+FT16P1
+	POP	AF
+	JP	Z,ERR0
+	JP	FR16P7
+;
+FDOPS
+	CALL	FDOP
+	INC	DE
+	LD	B,C
+	LD	C,^
+	CALL	SEPED
+	RET	Z
+	PUSH	BC
+	CALL	FDOP
+	POP	AF
+	LD	B,A
+	IF	VRS&1
+	OR	C
+	AND	32
+	JR	Z,FDOPSP1
+	RES	1,(IX+F1)
+FDOPSP1
+	END
+	JP	TENDLI
+;
+FDOP
+	LD	A,(DE)
+	LD	C,^
+	CALL	SEPED
+	RET	Z
+	INC	C
+	CP	"(
+	JR	NZ,FDOPP1
+	LD	C,32
+	INC	DE
+FDOPP1
+	LD	(PTWO),DE
+	CALL	FR16B
+	RET	Z
+	LD	DE,(PTWO)
+	CALL	FR8B
+FDOPP2	RET	Z
+	LD	DE,(PTWO)
+	LD	A,C
+	AND	32
+	OR	64
+	LD	C,A
+	JP	SCAN
+;
+FR16B
+	LD	HL,TBR16
+FR16L1
+	LD	A,(DE)
+	RES	5,A
+	CP	(HL)
+	INC	HL
+	JR	NZ,FR16P1
+	INC	DE
+	LD	A,(DE)
+	RES	5,A
+	CP	(HL)
+	JR	Z,FR16P2
+	DEC	DE
+FR16P1	INC	C
+	INC	HL
+	LD	A,(HL)
+	AND	A
+	JR	NZ,FR16L1
+	INC	A
+	RET
+FR16P2	LD	A,C
+	SET	3,C
+	AND	7
+	CP	5
+	INC	DE
+	JR	C,FR16P6
+	LD	A,C
+	JR	Z,FR16P5
+	SET	4,A
+FR16P5	AND	248
+	OR	130
+	LD	C,A
+	BIT	5,C
+	JR	Z,TSEP
+	LD	A,(DE)
+	CP	"+
+	JR	Z,FR16P4
+	CP	"-
+	RET	NZ
+FR16P4
+	LD	HL,(PILCA)
+	PUSH	HL
+	CALL	SCAN
+	LD	(DEPL),HL
+	POP	HL
+	LD	(PILCA),HL
+	DEC	DE
+FR16P6
+	IF	VRS&1
+	LD	A,C
+	CP	8
+	JR	NZ,FR16P8
+	SET	1,(IX+F1)
+FR16P8
+	END
+	BIT	5,C
+	JR	Z,TSEP
+	LD	A,C
+	AND	7
+	CP	2
+	JR	NZ,TSEP
+FR16P7	CALL	TSEP
+	RET	NZ
+	PUSH	AF
+	LD	A,C
+	AND	144
+	OR	6
+	LD	C,A
+	POP	AF
+	RET
+;
+FR8B
+	LD	HL,TBR8
+	PUSH	BC
+	LD	A,(DE)
+	RES	5,A
+	LD	BC,10
+	CPIR
+	LD	L,C
+	POP	BC
+	RET	NZ
+	INC	DE
+	LD	A,9
+	SUB	L
+	CP	8
+	JR	NC,FR8BP1
+	LD	L,A
+	LD	A,C
+	AND	32
+	OR	L
+	LD	C,A
+	JR	TSEP
+FR8BP1	SUB	8
+	LD	L,A
+	LD	A,C
+	AND	32
+	OR	L
+	LD	C,A
+	SET	4,C
+
+;
+; Check for a separator
+;
+; DE: read pointer
+;
+TSEP
+	LD	A,(DE)
+	BIT	5,C		; in sub expression ?
+	JR	Z,TSEP1
+	CP	")"
+	RET	NZ
+	INC	DE		; skip the ')'
+TSEP1
+	LD	A,(DE)
+	CP	","
+	RET	Z
+TSEP2
+	CALL	SEPED		; check EOL
+	RET	Z
+	CP	32		; space
+	RET	Z
+	CP	"'"		; What's all the following ??
+	RET	NZ
+	DEC	DE		; skip back the quote
+	LD	A,(DE)
+	RES	5,A		; upper case
+	CP	"F"
+	INC	DE		; skip the character
+	INC	DE		; skip the single quote
+	JP	NZ,ERR0
+	JR	TSEP1
+
+;
+; Check end of line
+;
+SEPED
+	CP	13
+	RET	Z
+	CP	^
+	RET
+
+;
+; Parse text for a number
+;
+SCANA
+	LD	A,(FLG1)
+	PUSH	AF		; Save FLG1
+	RES	4,A
+	SET	7,A
+	LD	(FLG1),A
+	CALL	SCANL		; Arithmetic expression parser
+	POP	AF
+	LD	(FLG1),A	; restore FLG1
+	RET
+
+;
+; Fetch a 8 bits value from calculator
+;
+FT8B
+	PUSH	HL
+	LD	HL,(PILCA)
+	LD	A,L
+	INC	H
+	JR	Z,FT8BP1
+	DEC	H
+	JP	NZ,ERR3
+FT8BP1	POP	HL
+	RET
+
+;
+; Search for a symbol in the symbol table
+; DE = symbol
+; returns the value in BC.
+;
+FTLAB
+	LD	HL,(VAR)	; HL = symbol table
+FTLBL1
+	LD	A,(HL)
+	CP	1		; 0 is end of table marker
+	RET	C		; return with Zero flag off
+	PUSH	DE
+	PUSH	HL
+	CALL	RDTEX		; compare symbols
+	POP	HL
+	LD	B,0
+	JR	Z,FTLBP1	; found
+	POP	DE
+	LD	C,10
+	ADD	HL,BC		; next entry
+	JR	FTLBL1		; loop, sequential search.
+FTLBP1
+	POP	AF		; drop symbol
+	SET	7,(HL)		; symbol "usefull" flag ?
+	;
+	; Fetch value
+	;
+	LD	C,8
+	ADD	HL,BC
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	CP	A		; set Z
+	RET
+
+;
+; Print "Symbol not found"
+;
+; HL = symbol
+;
+LABABS
+	BIT	0,(IX+F0)	; 'Use the screen memory' bit
+	CALL	NZ,CLS		; clear screen
+	CALL	LABEL
+	PUSH	HL
+	;
+	; Print the symbol
+	LD	B,C
+LABSL1	LD	A,(HL)
+	INC	HL
+	CALL	OC		; output char
+	DJNZ	LABSL1
+	;
+	CALL	PRTL
+	DEFB	9,10
+	DEFM	absent.
+	DEFB	13,^
+	POP	DE
+	BIT	0,(IX+F0)	; 'Use the screen memory' bit
+	JP	NZ,MONIT
+	SET	4,(IX+F1)
+	CALL	LABEL
+	LD	BC,-10
+	ADD	HL,BC
+	SET	7,(HL)
+	RES	4,(IX+F1)
+	LD	HL,(LPC)
+	RET
+
+;
+; Compare a symbol in the symbol table
+;
+; DE = symbol pointer
+; HL = symbol table entry
+; returns Z flag if symbol is found
+;
+RDTEX
+	;
+	; The first char of a symbol in the table (may)
+	; have the hight bit set to one.
+	;
+	LD	A,(DE)
+	XOR	(HL)
+	AND	127		; ignore bit 7
+	RET	NZ
+	LD	B,7		; remaining length
+RDTXL1
+	INC	DE
+	INC	HL
+	LD	A,(DE)		;
+	CALL	TTEX		; Returns Carry if A is not a valid symbol character
+	JR	C,RDTXP1	; end of symbol, exit
+	CP	(HL)
+	RET	NZ		; don't match
+	DJNZ	RDTXL1		; loop the whole name
+	;
+	; Ignore the remaining characters.
+	;
+RDTXL2
+	LD	A,(DE)		;
+	INC	DE
+	CALL	TTEX		; Returns Carry if A is not a valid symbol character
+	JR	NC,RDTXL2
+	DEC	DE		; rewind one char
+	CP	A		; set Z flag
+	RET
+RDTXP1
+	;
+	; Check that the symbol in symbol table is
+	; finished too
+	;
+	LD	A,(HL)
+	CALL	TTEX
+	LD	A,1
+	SBC	A,0		; Z flag is set if TTEX returns Carry
+	RET
+
+;
+; Returns Carry if A is not a valid symbol character
+;
+TTEX
+	CP	48
+	RET	C
+	CP	58
+	CCF
+	RET	NC
+TTEXA	CP	65
+	RET	C
+	CP	126
+	CCF
+	RET
+;
+*F,D3.BIN
+;
+; DAMS - An integrated Editor/Assembler/debugger for the Amstrad CPC.
+; Copyright (C) 1984-2015  Pascal Séguy  <pascal.seguy@laposte.net>
+;
+; File D3.BIN - Desassembler and debugger.
+;
+
+PADR
+	LD	DE,(PC)
+	JP	OUTNB
+;
+
+DEDUTR
+	LD	A,(DE)
+	CP	13
+	RET	Z
+	CALL	SCANL		; Arithmetic expression parser
+	CALL	TENDLI
+	LD	(PC),BC
+	RET
+;
+;
+DESAM
+	CALL	DEDUTR
+	CALL	ORT		; Print a CR
+	CALL	CANSEL
+	CALL	CANS
+	JR	Z,DESML1
+	CALL	INPUT3
+	DEFB	"E,"n,"d,"?,^
+	CALL	CANSEL
+DESML5
+	PUSH	BC
+	CALL	DESA
+	POP	BC
+	SCF
+	SBC	HL,BC
+	JR	C,DESML5
+	RET
+DESML1
+	CALL	DESA
+	CALL	KEY2
+	JR	NZ,DESML1
+	RET
+;
+DESA
+	CALL	PADR
+	PUSH	DE
+	EX	DE,HL
+	CALL	DESAC
+	PUSH	HL
+	PUSH	BC
+	LD	C,8
+	CALL	TAB
+	LD	A,D
+	ADD	A,|
+	CALL	OC
+	LD	C,13
+	CALL	TAB
+	POP	BC
+	CALL	CDOPS
+	LD	C,28
+	CALL	TAB
+	POP	HL
+	POP	DE
+	AND	A
+	SBC	HL,DE
+	LD	B,L
+	EX	DE,HL
+AFDSL1
+	CALL	KEEPH
+	LD	E,A
+	INC	HL
+	LD	A,25
+	CALL	OUTNB1
+	DJNZ	AFDSL1
+	LD	(PC),HL
+	JP	ORT		; Print a CR
+;
+DESAC
+	LD	(LPC),HL
+	CALL	KEEPH
+	CP	221
+	JR	Z,DESACID
+	CP	253
+DESACID	JP	Z,PRFID
+DESAC1
+	LD	BC,^
+	LD	D,0
+	CALL	KEEPH
+	INC	HL
+	CP	203
+	JP	Z,PRFCB
+	CP	237
+	JP	Z,PRFED
+;
+	LD	E,A
+	CP	64
+	JP	NC,CARR
+	PUSH	HL
+	LD	HL,T4
+	JP	IDX3
+;
+T4
+	DEFB	CDB0-T4
+	DEFB	CDB1-T4-1
+	DEFB	CDB2-T4-2
+	DEFB	CDB3-T4-3
+	DEFB	CDB4-T4-4
+	DEFB	CDB5-T4-5
+	DEFB	CDB6-T4-6
+	DEFB	CDB7-T4-7
+;
+CDB0
+	AND	A
+	LD	D,33
+	RET	Z
+	CP	8
+	JP	Z,FTTB2
+	CP	16
+	LD	B,64
+	LD	D,26
+	JR	Z,CDB05
+	CP	24
+	LD	D,29
+	JR	Z,CDB05
+	LD	C,B
+	CALL	FR81
+	SET	4,A
+	RES	2,A
+	LD	B,A
+CDB05	JP	FTRL
+CDB1
+	BIT	3,A
+	JR	NZ,CDB1P1
+	CALL	DR16
+	LD	B,A
+	SET	3,B
+	LD	C,64
+	JP	FT2OC
+CDB1P1
+	LD	D,3
+	LD	B,10
+	CALL	DR16
+	SET	3,A
+	LD	C,A
+	RET
+CDB2
+	CP	32
+	JP	NC,FTTB2
+	LD	E,A
+	CALL	DR16
+	OR	%101000
+	LD	B,A
+	LD	C,7
+	BIT	3,E
+	RET	Z
+	LD	A,B
+	LD	B,C
+	LD	C,A
+	RET
+CDB3
+	INC	D
+	BIT	3,A
+	JR	Z,CDB3P1
+	INC	D
+CDB3P1	CALL	DR16
+	SET	3,A
+	LD	B,A
+	RET
+CDB4
+	INC	D
+	CALL	FR81
+	LD	B,A
+	RET
+CDB5
+	INC	D
+	JR	CDB4
+CDB6
+	CALL	FR81
+	LD	B,A
+	LD	C,64
+	JP	FT1OC
+CDB7
+	JP	FTTB1
+;
+CARR
+	CP	192
+	JR	NC,CDHT
+	LD	D,42
+	CP	118
+	RET	Z
+	LD	D,0
+	SUB	|
+	JP	C,FR82
+	CALL	FR82
+CARRP1	LD	A,3
+	ADD	A,B
+	LD	D,A
+	LD	B,7
+	CP	5
+	RET	C
+	CP	6
+	RET	Z
+	LD	B,C
+	LD	C,^
+	RET
+;
+CDHT
+	PUSH	HL
+	LD	HL,TBCDH
+	JP	IDX3
+;
+TBCDH
+	DEFB	CDH0-TBCDH-0
+	DEFB	CDH1-TBCDH-1
+	DEFB	CDH2-TBCDH-2
+	DEFB	CDH3-TBCDH-3
+	DEFB	CDH4-TBCDH-4
+	DEFB	CDH5-TBCDH-5
+	DEFB	CDH6-TBCDH-6
+	DEFB	CDH7-TBCDH-7
+;
+CDH0
+	LD	D,31
+	CALL	FR81
+	SET	4,A
+	LD	B,A
+	RET
+CDH1
+	BIT	3,A
+	JP	NZ,FTTB2
+	LD	D,12
+CDH11	CALL	DR16
+	SET	3,A
+	LD	B,A
+	CP	11
+	RET	C
+	INC	B
+	RET
+CDH2
+	LD	D,32
+CDH21	LD	C,64
+	CALL	FR81
+	SET	4,A
+	LD	B,A
+	JP	FT2OC
+CDH3
+	JP	FTTB2
+CDH4
+	LD	D,30
+	JR	CDH21
+CDH5
+	BIT	3,A
+	JR	NZ,CDH51
+	LD	D,11
+	JR	CDH11
+CDH51	CP	205
+	JR	NZ,PRFEDE
+	LD	D,30
+	LD	B,64
+	JP	FT2OC
+CDH6
+	CALL	FR81
+	LD	B,A
+	LD	C,64
+	CALL	CARRP1
+	JP	FT1OC
+CDH7
+	LD	D,25
+	AND	%111000
+	LD	B,64
+	JP	FT1OC2
+;
+PRFCB
+	CALL	KEEPH
+	LD	E,A
+	INC	HL
+	CP	64
+	JR	NC,PRFCBB
+	LD	D,16
+	CALL	FR81
+	ADD	A,D
+	LD	D,A
+	CP	22
+	JR	Z,PRFEDE
+	JR	C,PRFCBP1
+	DEC	D
+PRFCBP1	LD	A,E
+	AND	7
+	LD	B,A
+	RET
+PRFCBB
+	RLCA
+	RLCA
+	AND	3
+	LD	D,12
+	ADD	A,D
+	LD	D,A
+	LD	A,E
+	CALL	FR82
+	SET	6,B
+	SET	4,B
+	RET
+;
+PRFED
+	CALL	KEEPH
+	INC	HL
+	LD	E,A
+	CP	160
+	JR	C,PRFEDP1
+	CP	188
+	JP	C,FTTB1
+PRFEDE	JP	ERRD
+PRFEDP1	CP	64
+	JR	C,PRFEDE
+	CP	124
+	JR	NC,PRFEDE
+	PUSH	HL
+	LD	HL,TBCED
+	JP	IDX3
+;
+TBCED
+	DEFB	CDED0-TBCED-0
+	DEFB	CDED1-TBCED-1
+	DEFB	CDED2-TBCED-2
+	DEFB	CDED3-TBCED-3
+	DEFB	CDED4-TBCED-4
+	DEFB	CDED5-TBCED-5
+	DEFB	CDED6-TBCED-6
+	DEFB	CDED7-TBCED-7
+;
+CDED0
+	LD	D,23
+	CALL	FR81
+	LD	B,A
+	LD	C,33
+	CP	6
+	RET	NZ
+	JR	PRFEDE
+CDED1
+	LD	D,24
+	LD	B,33
+	CALL	FR81
+	CP	6
+	LD	C,A
+	RET	NZ
+	JR	PRFEDE
+CDED2
+	BIT	3,A
+	LD	D,4
+	JR	NZ,CDED21
+	LD	D,6
+CDED21	LD	B,10
+	CALL	DR16
+	LD	C,A
+	SET	3,C
+	RET
+CDED3
+	CALL	DR16
+	SET	3,A
+	LD	B,A
+	LD	C,96
+	BIT	3,E
+	JR	NZ,CDED31
+	LD	A,B
+	LD	B,C
+	LD	C,A
+CDED31	JP	FT2OC
+CDED4
+	JP	FTTB1
+CDED5	JR	CDED4
+CDED6	JP	FTTB2
+CDED7	CP	103
+	JR	C,CDED6
+	JR	CDED4
+;
+PRFID
+	PUSH	AF
+	INC	HL
+	CALL	KEEPH
+	CP	203
+	JR	Z,PRFIDP1
+	CP	54
+	JR	Z,PRFIDP1
+	CP	#ED
+	CALL	Z,ERRID
+	CALL	DESAC1
+	LD	A,B
+	CP	6
+	JR	Z,PRFIDP4
+	LD	A,C
+	CP	6
+	JR	NZ,PRFIDP5
+PRFIDP4	CALL	KEEPH
+	INC	HL
+	LD	(DEPL),A
+	JR	PRFIDP5
+PRFIDP1
+	PUSH	HL
+	LD	DE,WORKZ-6
+	PUSH	DE
+	CALL	KEEPH
+	LD	(DE),A
+	INC	HL
+	INC	DE
+	INC	HL
+	CALL	KEEPH
+	LD	(DE),A
+	INC	DE
+	DEC	HL
+	CALL	KEEPH
+	LD	(DE),A
+	LD	(DEPL),A
+	POP	HL
+	CALL	DESAC1
+	POP	HL
+	INC	HL
+	INC	HL
+	INC	HL
+PRFIDP5
+	POP	AF
+	AND	32
+	RRA
+	OR	|
+	LD	E,A
+	LD	A,B
+	CALL	TSIDX
+	JR	NZ,PRFIDP2
+	OR	E
+	LD	B,A
+PRFIDP2
+	LD	A,C
+	CALL	TSIDX
+	JR	Z,PRFIDP21
+	BIT	7,B
+	JR	Z,ERRID
+	INC	B
+	PUSH	AF
+	DEC	B
+	POP	AF
+	JR	Z,ERRID
+	RET
+PRFIDP21	OR	E
+	LD	C,A
+	RET
+ERRID
+	LD	A,"*
+	JP	OC
+TSIDX
+	AND	63
+	CP	6
+	RET	Z
+	CP	10
+	RET	Z
+	CP	42
+	RET
+;
+FT1OC
+	CALL	KEEPH
+	INC	HL
+FT1OC2	LD	(PILCA),A
+	LD	(IX+PILCA+1-PC),0
+	RET
+FT2OC
+	CALL	KEEPH
+	INC	HL
+	LD	(PILCA),A
+	CALL	KEEPH
+	INC	HL
+	LD	(PILCA+1),A
+	RET
+FTRL
+	CALL	KEEPH
+	INC	HL
+	PUSH	DE
+	PUSH	HL
+	LD	D,0
+	LD	E,A
+	CP	|
+	JR	C,FTRLP1
+	DEC	D
+FTRLP1	ADD	HL,DE
+	LD	(PILCA),HL
+	POP	HL
+	POP	DE
+	RET
+FR81
+	RRA
+	RRA
+	RRA
+	AND	7
+	RET
+FR82
+	AND	7
+	LD	C,A
+	LD	A,E
+	CALL	FR81
+	LD	B,A
+	RET
+DR16
+	RRA
+	RRA
+	RRA
+	RRA
+	AND	3
+	RET
+;
+FTTB1
+	PUSH	HL
+	PUSH	BC
+	LD	HL,TBAS1
+	LD	BC,34
+	CPIR
+	JR	NZ,FTTB1P1
+	LD	A,66
+	SUB	C
+	LD	D,A
+	CP	A
+FTTB1P1	POP	BC
+	POP	HL
+	RET	Z
+;
+ERRD
+	LD	D,42-|
+	RET
+;
+FTTB2
+	PUSH	HL
+	LD	HL,TBDS
+	LD	C,0
+FTTB2L1
+	INC	C
+	CP	(HL)
+	INC	HL
+	JR	Z,FTTB2P1
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	(HL)
+	DEC	(HL)
+	JR	NZ,FTTB2L1
+	POP	HL
+	JR	ERRD
+FTTB2P1	LD	D,(HL)
+	LD	A,C
+	INC	HL
+	LD	B,(HL)
+	INC	HL
+	LD	C,(HL)
+	POP	HL
+	CP	8
+	RET	NC
+	CP	6
+	JR	NC,FT1OC
+	JR	FT2OC
+;
+CDOPS
+	LD	A,B
+	INC	B
+	RET	Z
+	PUSH	BC
+	CALL	CDOP
+	POP	BC
+	INC	C
+	RET	Z
+	DEC	C
+	LD	A,",
+	CALL	OC
+	LD	A,C
+CDOP
+	LD	B,0
+	LD	D,A
+	BIT	5,D
+	JR	Z,CDOP2
+	RES	5,D
+	LD	A,"(
+	CALL	OC
+	LD	A,D
+	CALL	CDOP2
+	LD	A,")
+	JP	OC
+CDOP2
+	BIT	7,A
+	JR	NZ,CDOPI
+	BIT	6,A
+	JP	NZ,CDOPNB
+	AND	31
+	CP	8
+	JR	NC,CDOPP2
+	LD	HL,TBR8
+	LD	C,A
+	ADD	HL,BC
+	LD	A,(HL)
+	CP	"@
+	JP	NZ,OC
+	CALL	PRTL
+	DEFM	(HL)
+	DEFB	^
+	RET
+CDOPP2
+	CP	16
+	JR	NC,CDOPP5
+	SUB	8
+	CP	5
+	JR	NC,CDOPP3
+	RLCA
+	LD	C,A
+	LD	HL,TBR16
+	ADD	HL,BC
+	LD	A,(HL)
+	CALL	OC
+	INC	HL
+	LD	A,(HL)
+	JP	OC
+CDOPP3
+	SUB	5
+	LD	A,"I
+	JR	Z,CDOP31
+	LD	A,"R
+CDOP31	JP	OC
+CDOPP5
+	RES	4,A
+	RLCA
+	LD	C,A
+	LD	HL,TBKK
+	ADD	HL,BC
+	LD	A,(HL)
+	CALL	OC
+	INC	HL
+	LD	A,(HL)
+	CP	"'
+	RET	Z
+	JP	OC
+CDOPI
+	AND	7
+	CP	6
+	PUSH	AF
+	LD	A,"(
+	CALL	Z,OC
+	LD	A,"I
+	CALL	OC
+	LD	A,"X
+	BIT	4,D
+	JR	Z,CDOPIP1
+	INC	A
+CDOPIP1	CALL	OC
+	POP	AF
+	RET	NZ
+	LD	A,(DEPL)
+	CP	|
+	PUSH	AF
+	LD	A,"+
+	JR	C,CDOPIP2
+	LD	A,"-
+CDOPIP2	CALL	OC
+	POP	AF
+	JR	C,CDOPIP3
+	NEG
+CDOPIP3	LD	E,A
+	CALL	ONB12
+	LD	A,")
+	JP	OC
+;
+CDOPNB
+	BIT	4,A
+	JR	NZ,CDOPNB2
+	LD	DE,(PILCA)
+	BIT	4,(IX+F2)
+	JP	NZ,SBLAB
+CDOPNBP1
+	JP	ONB4
+CDOPNB2
+	AND	7
+	ADD	A,48
+	JP	OC
+;
+SBLAB
+	CALL	FTDLAB
+	JR	NZ,CDOPNBP1
+	CP	8
+	LD	A,"R
+	JR	C,SBLBP1
+	LD	A,"W
+SBLBP1	JP	DOLAB
+;
+IDX3
+	AND	7
+IDX31	PUSH	BC
+	LD	C,A
+	LD	B,0
+	ADD	HL,BC
+	LD	C,(HL)
+	ADD	HL,BC
+	POP	BC
+	LD	A,E
+	EX	(SP),HL
+	RET
+
+;
+; Breakpoint entry point
+;
+BRKENT
+	DI
+	PUSH	HL
+	PUSH	AF
+	PUSH	BC
+	LD	BC,#7F8E
+	OUT	(C),C		; memory mapping ? (fixme)
+	LD	HL,FLG3
+	SET	5,(HL)		; 'Break point reached' flag
+	LD	HL,(AXCZ)	; The 'jump' place holder address in the deported trace stub
+	LD	BC,4
+	ADD	HL,BC
+	POP	BC
+	POP	AF
+	EX	(SP),HL		; restore the user's HL value, and prepare a...
+	RET			; jump to the return phase of the trace deported stub.
+
+;
+; Command 'J' (Jump)
+;
+RUNP
+	LD	A,(DE)
+	CP	13		; CR ?
+	JR	Z,RUN1
+	CP	"$"		; Continue after a beakpoint
+	PUSH	AF
+	CALL	SCANL		; Arithmetic expression parser
+	POP	AF
+	JR	NZ,RUN2
+				; it's a continue after BP
+	CALL	RUNC1		; perform the jump
+	;
+	; Pop the return address in user's stack
+	; and store it in PC.
+	LD	HL,(STK2)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(STK2),HL	; save SP once popped
+	LD	(PC),DE		; save user's return address
+	JP	TRACE1		; continue in the 'trace' command for display
+RUN1				; use program entry point
+	LD	BC,(ENTP)
+	LD	A,B
+	OR	C
+	RET	Z
+RUN2				; it's not a continue after BP
+	LD	A,142		; 0x8E (comment me)
+	LD	(CFG),A		; store memory config
+	LD	(IX+10),A
+	LD	(IX+11),#7F
+	LD	(IX+5),A
+	LD	(IX+4),0
+RUNC1
+	;
+	; Prepare the deported trace stub for the jump.
+	;
+	LD	HL,(AXCZ)	; The 'jump' place holder address in the deported trace stub
+	LD	(HL),205	; Write the Z80 'CALL' opcode
+	INC	HL
+	LD	(HL),C		; Write the destination address
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),#F3	; Z80 'DI' opcode
+	CALL	EXECT2		; perform the call
+	BIT	5,(IX+F3)	; a breakpoint has been reached ?
+	RET	Z
+	RES	5,(IX+F3)	; reset flag
+	LD	HL,(BRKPT)
+	LD	(PC),HL
+	CALL	AFFBRK		; dispaly the BP
+	LD	BC,0
+	JP	SWAP		; cancel it and return.
+
+;
+; The 'R' command
+;
+RTRAC
+	SET	3,(IX+F3)	; in fast trace mode
+	CALL	DEDUTR
+	LD	HL,(STK2)	; fecth user's SP
+	INC	HL		; make room for return addrr (?)
+	INC	HL
+	LD	(BORG),HL	; save in temp storage
+RTRCL1
+	LD	HL,(PC)		; fetch the user's program counter
+	CALL	DESAC
+	LD	(PC),HL		; store next instruction address
+	CALL	EXECIS
+	LD	HL,(STK2)
+	LD	DE,(BORG)
+	AND	A
+	SBC	HL,DE
+	JR	Z,RTRCP1
+	LD	A,R
+	CP	7
+	JR	NC,RTRCL1
+	BIT	2,(IX+CFG-PC)
+	JR	Z,RTRCL1
+	CALL	BREAK		; check for break key
+	JR	NZ,RTRCL1
+	LD	HL,(LPC)
+	LD	(PC),HL
+	LD	(IX+FZ),12	; Screen window size in lines
+	CALL	DESA
+	JR	TRACE2
+RTRCP1
+	RES	3,(IX+F3)	; fast trace mode flag
+	JR	TRACE1
+;
+ERRTR
+;PING
+	CALL	FACAV
+	LD	(IX+LN),23	; screen write pos line
+	LD	(IX+FZ),25	; Screen window size in lines
+	LD	HL,(LPC)
+	LD	(PC),HL
+	CALL	DESA
+	JP	ERR12
+
+;
+; The 'T' command
+;
+TRACE
+	CALL	DEDUTR
+	SCF
+	JR	TRACE12
+TRACE1
+	LD	A,(SPO+1)	; screen write pos line
+	CP	23
+TRACE12
+	CALL	C,CLS
+TRACE2
+	SET	2,(IX+F3)	; in trace mode
+	LD	HL,0
+	LD	(ENTP),HL
+	LD	(IX+FZ),12	; Screen window size in lines
+TRACL1
+	CALL	FACAV
+	CALL	KEY2
+	JR	Z,TRACPF
+	CALL	DESA
+	CALL	EXECIS
+	JR	TRACL1
+TRACPF
+	LD	(IX+LN),23	; screen write pos line
+	RET
+
+
+;
+; Enter trace
+;
+EXECIS
+	LD	B,0
+	LD	(IX+FS),B
+	LD	DE,(LPC)
+	CALL	KEEP		; fecth code at DE
+	CP	118		; 'HALT' ?
+	RET	Z		; ignore
+	CP	251		; 'EI' ?
+	RET	Z		; ignore
+	CP	#CB		; 'RLC' ?
+	JR	Z,TRACP1
+	CP	#ED		; Multi-byte opcode ?
+	JR	NZ,TRP11
+	INC	DE
+	CALL	KEEP
+	CP	69		; 'RETN'
+	JP	Z,PRET
+	CP	77		; 'RETI'
+	JP	Z,PRET
+	CP	124		; ?
+	JR	NC,EXECIP8
+	LD	C,A
+	AND	7
+	CP	1
+	JR	NZ,EXECIP8
+	LD	A,(PC+21)
+	LD	B,A
+	CP	#DF
+	JP	Z,TIOE
+	AND	192
+	CP	64
+	JP	Z,TIO
+EXECIP8	DEC	DE
+	JR	TRACP1
+TRP11
+	CP	253
+	JR	Z,TRP111
+	CP	221
+	JR	NZ,TRP12
+TRP111
+	LD	(STOR),A
+	INC	DE
+	CALL	KEEP
+	CP	233
+	JP	Z,JPID
+	JR	TRACP1
+TRP12
+	LD	HL,TBPC1
+	LD	C,6
+	CPIR
+	JP	Z,PCINS
+	LD	C,A
+	AND	#E7
+	CP	32
+	LD	A,C
+	JP	Z,PJRC
+	CP	192
+	JR	C,TRACP1
+	AND	#C7
+	LD	C,4
+	LD	HL,TBPC2
+	CPIR
+	JP	Z,PCINS2
+TRACP1
+	CALL	MEMOP
+EXECTR
+	LD	HL,(PC)
+	LD	DE,(LPC)
+	AND	A
+	SBC	HL,DE
+	LD	B,L
+	LD	C,L
+	LD	HL,(AXCZ)
+EXECTL2	CALL	KEEP
+	LD	(HL),A
+	INC	DE
+	INC	HL
+	DJNZ	EXECTL2
+	LD	A,4
+	SUB	C
+	JR	Z,EXECT2
+EXCTL1	LD	(HL),B
+	DEC	A
+	INC	HL
+	JR	NZ,EXCTL1
+	; fall thru EXECT2
+;
+; Execute the trace, the deported stub is
+; already set up.
+;
+EXECT2
+	LD	IY,(AXCZ)	; IY is a pointer in the EXECZ address of the deported stub
+	LD	HL,(STK2)	; HL is the user's stack pointer
+	LD	(IY-2),L	; fix the user's SP value in the deported stub
+	LD	(IY-1),H
+	LD	(STKP),SP	; save our SP
+	LD	HL,(STKP)
+	DEC	HL		; make room in the stack for the stub return address
+	DEC	HL
+	LD	(IY+9),L	; fix our SP value in the deported stub
+	LD	(IY+10),H
+	LD	SP,PC+2		; SP on user's registers buffer area
+	POP	AF		; restore all user's registers...
+	LD	I,A
+	POP	AF
+	EX	AF,AF'
+	POP	HL
+	POP	DE
+	POP	BC
+	EXX
+	POP	IX
+	POP	IY
+	POP	HL
+	POP	DE
+	POP	BC
+	POP	AF
+	LD	SP,(STKP)	; restore our SP
+	PUSH	HL		; save the user's HL value while we need at least HL
+	LD	HL,(AXCR)	; Fetch the deported stub address
+	CALL	JRHL		; jump HL: continue in our deported trace stub (EXECR).
+	; fall thru INIT2
+INIT2
+	LD	SP, PC+24	; move SP at end of our regs buffer
+	PUSH	AF		; save user's registers...
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	PUSH	IY
+	PUSH	IX
+	EXX
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	EX	AF,AF'
+	PUSH	AF
+	LD	A,I
+	LD	B,A
+	LD	A,R
+	LD	C,A
+	PUSH	BC		; save user's IR registers
+	LD	SP,(STKP)	; restore our SP
+	LD	HL,(ASTK2)
+	LD	DE,STK2		; Save user's SP
+	LDI
+	LDI
+	LD	IX,PC		; IX back to our user's context
+	RET
+
+;
+; Save curent CPU registers values in PC area
+;
+INITR
+	LD	(STKP),SP	; save our SP
+	JR	INIT2
+
+
+;
+; Check for memory operation before stepping
+; an instruction
+;
+MEMOP
+	CALL	KEEP
+	CP	#ED
+	JR	NZ,MEMCB
+	INC	DE
+	CALL	KEEP
+	CP	124
+	JR	NC,MEMEDP1
+	AND	15
+	CP	3
+	RET	NZ
+	JP	ADRNU
+MEMEDP1	CP	172
+	JR	NC,MEMEDP2
+	AND	7
+	JR	Z,ADRDE
+	CP	2
+	RET	NZ
+	JR	ADRDE
+MEMEDP2	LD	C,4
+	LD	HL,TBME2
+	CPIR
+	RET	NZ
+	LD	A,10
+	JR	MEMR
+MEMCB
+	CP	#CB
+	JR	NZ,MEM0
+	PUSH	DE
+	INC	DE
+	BIT	0,(IX+FS)
+	JR	Z,MEMCBP1
+	INC	DE
+MEMCBP1
+	CALL	KEEP
+	POP	DE
+	CP	64
+	JR	C,MEMCBP2
+	CP	|
+	RET	C
+MEMCBP2
+	AND	7
+	CP	6
+	RET	NZ
+	JP	ADRH1
+MEM0
+	CP	112
+	JR	C,MEM0P1
+	CP	120
+	JP	C,ADRH1
+MEM0P1
+	CP	197
+	JR	C,MEM0P2
+	AND	15
+	CP	5
+	RET	NZ
+	JR	ADRSP
+MEM0P2
+	LD	HL,TBME1
+	LD	C,7
+	CPIR
+	RET	NZ
+	LD	A,6
+MEMR
+	SUB	C
+	PUSH	HL
+	LD	HL,TBMER
+	JP	IDX31
+TBME1
+	DEFB	2,18,34,50
+	DEFB	52,53,54
+TBME2
+	DEFB	176,178,184,186
+TBMER
+	DEFB	ADRBC-TBMER
+	DEFB	ADRDE-TBMER-1
+	DEFB	ADRNU-TBMER-2
+	DEFB	ADRNU-TBMER-3
+	DEFB	ADRH1-TBMER-4
+	DEFB	ADRH1-TBMER-5
+	DEFB	ADRH1-TBMER-6
+	DEFB	ADRLI-TBMER-7
+	DEFB	ADRII-TBMER-8
+	DEFB	ADRLD-TBMER-9
+	DEFB	ADRID-TBMER-10
+;
+ADRSP
+	LD	HL,(STK2)
+	JR	TSLOC
+ADRBC
+	LD	HL,(PC+20)
+	JR	TSLOC
+ADRDE
+	LD	HL,(PC+18)
+	JR	TSLOC
+ADRLI
+	CALL	ADRDE
+	CALL	TESBC
+	RET	NC
+ADRLIP1	ADD	HL,BC
+	JR	C,ERRP1
+	CALL	TSLOC
+	RET	C
+	JR	ERRP1
+ADRLD
+	CALL	ADRDE
+	CALL	TESBC
+	RET	C
+ADRLDP1	AND	A
+	SBC	HL,BC
+	JR	C,ERRP1
+	CALL	TSLOC
+	RET	NC
+ERRP1	JP	ERRTR
+ADRII
+	CALL	ADRDE
+	RET	NC
+	LD	C,(IX+21)
+	LD	B,0
+	JR	ADRLIP1
+ADRID
+	CALL	ADRDE
+	RET	C
+	LD	C,(IX+21)
+	LD	B,0
+	JR	ADRLDP1
+ADRH1
+	LD	HL,(PC+16)
+	BIT	0,(IX+FS)
+	JR	Z,TSLOC
+	INC	DE
+	LD	A,(DE)
+	LD	C,A
+	LD	HL,PC+12
+	BIT	5,(IX+FS)
+	JR	Z,FDVIP1
+	INC	HL
+	INC	HL
+FDVIP1
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	LD	B,0
+	CP	|
+	JR	C,IDL112
+	DEC	B
+IDL112
+	ADD	HL,BC
+	JR	TSLOC
+ADRNU
+	INC	DE
+	CALL	KEEP
+	LD	L,A
+	INC	DE
+	CALL	KEEP
+	LD	H,A
+
+;
+; Check for HL to be a valid pointer within DAMS
+;
+TSLOC
+	PUSH	DE
+	AND	A
+	LD	DE,DEP
+	SBC	HL,DE
+	ADD	HL,DE
+	JR	C,TSLOCP1
+	LD	DE,(END)	; DAMS brk address
+	INC	DE
+	SBC	HL,DE
+	ADD	HL,DE
+	JR	C,TSLOCP2
+TSLOCP1	POP	DE
+	RET
+TSLOCP2
+	BIT	1,(IX+F3)	; assembly phase ?
+	JP	NZ,ERR6
+	BIT	2,(IX+F3)	; in trace mode ?
+	JR	NZ,TSLOCE
+	BIT	3,(IX+F3)	; in fast trace mode ?
+	JP	Z,ERR12
+TSLOCE	JR	ERRP1
+;
+TESBC
+	PUSH	AF
+	LD	BC,(PC+20)
+	LD	A,B
+	CP	200
+	JR	NC,TSLOCE
+	OR	C
+	JR	Z,TSLOCE
+	POP	AF
+	RET
+;
+TESTHL
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	CALL	TSHM
+	JR	NC,TSLOC
+	JP	ERR8
+;
+PCINS
+	LD	A,5
+	JR	PCINSP1
+PCINS2
+	LD	A,9
+PCINSP1	SUB	C
+	PUSH	HL
+	EX	DE,HL
+	PUSH	AF
+	CALL	KEEPH
+	LD	E,A
+	POP	AF
+	LD	HL,TBPCR
+	JP	IDX31
+;
+TBPC1
+	DEFB	16,24,195,201
+	DEFB	205,233
+TBPC2	DEFB	192,194,196,199
+;
+TBPCR	DEFB	PDJN-TBPCR
+	DEFB	PJR-TBPCR-1
+	DEFB	PJP-TBPCR-2
+	DEFB	PRET-TBPCR-3
+	DEFB	PCAL-TBPCR-4
+	DEFB	JPHL-TBPCR-5
+	DEFB	PRETC-TBPCR-6
+	DEFB	PJPC-TBPCR-7
+	DEFB	PCALC-TBPCR-8
+	DEFB	PRST-TBPCR-9
+;
+PCALC
+	CALL	FINDCC
+	RET	NC
+PCAL
+	CALL	ISTK
+PJP
+	LD	HL,(LPC)
+	INC	HL
+	CALL	INDEHL
+PJP2
+	LD	(PC),DE
+	RET
+ISTK
+	LD	HL,(STK2)
+	DEC	HL
+	DEC	HL
+	CALL	TSLOC
+	INC	HL
+	LD	BC,(PC)
+	LD	(HL),B
+	DEC	HL
+	LD	(HL),C
+	LD	(STK2),HL
+	RET
+PRST
+	AND	%00111000
+	LD	E,A
+	LD	D,0
+	CALL	ISTK
+	JR	PJP2
+PRETC
+	CALL	FINDCC
+	RET	NC
+PRET
+	LD	HL,(STK2)
+	CALL	INDEHL
+	LD	(STK2),HL
+	JR	PJP2
+PJRC
+	RES	5,A
+	CALL	FINDCC
+	RET	NC
+PJR
+	LD	HL,(LPC)
+	INC	HL
+	CALL	KEEPH
+	LD	E,A
+	INC	HL
+	LD	D,0
+	CP	|
+	JR	C,JRP2
+	DEC	D
+JRP2
+	ADD	HL,DE
+	LD	(PC),HL
+	RET
+PJPC
+	CALL	FINDCC
+	RET	NC
+	JR	PJP
+JPID
+	LD	HL,PC+12
+	BIT	5,(IX+FS)
+	JR	Z,JPHLP1
+	INC	HL
+	INC	HL
+	JR	JPHLP1
+JPHL
+	LD	HL,PC+16
+JPHLP1	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	JR	PJP2
+;
+PDJN
+	DEC	(IX+21)
+	JR	NZ,PJR
+	RET
+;
+TBCK	DEFB	7,1,3,8
+;
+FINDCC
+	RRA
+	RRA
+	RRA
+	AND	7
+	LD	HL,TBCK
+	LD	E,A
+	SRL	E
+	LD	D,0
+	ADD	HL,DE
+	LD	B,(HL)
+	LD	C,A
+	LD	A,(IX+22)
+CKL1
+	RRA
+	DJNZ	CKL1
+	RLA
+	XOR	C
+	CPL
+	RRA
+	RET
+;
+INDEHL
+	CALL	KEEPH
+	LD	E,A
+	INC	HL
+	CALL	KEEPH
+	LD	D,A
+	INC	HL
+	RET
+;
+TIO
+	LD	A,C
+	CALL	FR81
+	CALL	KPRG
+	LD	E,A
+	AND	192
+	CP	|
+	LD	A,E
+	JR	NZ,TIOP6
+	LD	(CFG),A
+	OR	12
+TIOP6	OUT	(C),A
+TIOPF
+	BIT	2,(IX+F3)	; in trace mode ?
+	RET	Z
+	JP	AFMODE
+TIOE
+	LD	A,C
+	CALL	FR81
+	CALL	KPRG
+	LD	(CFGE),A
+	JR	TIOPF
+;
+KPRG
+	CP	7
+	JR	NZ,KPRGP1
+	LD	HL,PC+23
+	JR	KPRGP5
+KPRGP1
+	SUB	7
+	NEG
+	LD	HL,PC+14
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
+KPRGP5
+	LD	A,(HL)
+	RET
+
+;
+; Print the registers dashboard
+;
+FACAV
+	LD	B,(IX+LN)	; screen write pos line
+	LD	C,(IX+FZ)	; Screen window size in lines
+	PUSH	BC
+	LD	(IX+FZ),24	; Screen window size in lines
+	LD	HL,13*256
+	LD	(SPO),HL	; screen write pos
+	CALL	PRTL
+	DEFB	"P,"C,^
+	LD	DE,(PC)
+	CALL	AFSUI1
+	CALL	PRTL
+	DEFB	"S,"P,^
+	LD	DE,(STK2)
+	CALL	AFSUI
+	CALL	PRTL
+	DEFB	"I,"R,9,11,^
+	LD	DE,(PC+2)
+	CALL	AFSU2
+	CALL	ORT		; Print a CR
+	CALL	PRTL
+	DEFB	"I,"X,^
+	LD	DE,(PC+12)
+	CALL	AFSUI1
+	CALL	PRTL
+	DEFB	"I,"Y,^
+	LD	DE,(PC+14)
+	CALL	AFSUI
+	CALL	ORT		; Print a CR
+	LD	HL,PC+16
+	CALL	AFREG
+	CALL	PRTL
+	DEFB	13,"A,"F,^
+	LD	DE,(PC+22)
+	CALL	AFAF
+	LD	(IX+CN),40	; screen write pos column
+	CALL	AFPRIM
+	LD	DE,(PC+4)
+	CALL	AFAF
+	LD	HL,13*256+73
+	LD	(SPO),HL	; screen write pos
+	CALL	PRTL
+	DEFB	"S,"T,"A,"C,"K,13,^
+	LD	HL,(STK2)
+	LD	B,8
+AFSTA
+	LD	(IX+CN),73	; screen write pos column
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	CALL	OUTNB
+	INC	(IX+LN)		; screen write pos line
+	DJNZ	AFSTA
+	LD	(IX+CN),B	; screen write pos column
+	POP	BC
+	LD	(IX+FZ),C	; Screen window size in lines
+	LD	(IX+LN),B	; screen write pos line
+	RET
+;
+AFREG
+	LD	DE,TBRGT
+	LD	B,3
+AFRL
+	LD	A,(DE)
+	INC	DE
+	CALL	OC
+	LD	A,(DE)
+	INC	DE
+	CALL	OC
+	PUSH	DE
+	CALL	AFRG1
+	PUSH	HL
+	LD	DE,-12
+	ADD	HL,DE
+	CALL	AFPRIM
+	CALL	AFRG1
+	CALL	ORT		; Print a CR
+	POP	HL
+	POP	DE
+	DJNZ	AFRL
+	RET
+;
+AFSUI
+	CALL	AFSUI1
+	JP	ORT		; Print a CR
+AFRG1
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+AFSUI1
+	LD	A,2
+	CALL	SPCS
+	CALL	DEC2S
+	LD	A,2
+	CALL	SPCS
+AFSU2
+	PUSH	DE
+	LD	E,D
+	CALL	DEC1S
+	LD	A,32
+	CALL	OC
+	POP	DE
+	CALL	DEC1S
+	LD	A,3
+	CALL	SPCS
+	CALL	HEX2S
+	LD	(IX+CN),40	; screen write pos column
+	RET
+;
+AFAF
+	PUSH	DE
+	LD	A,2
+	CALL	SPCS
+	LD	E,D
+	LD	D,0
+	CALL	DEC2S
+	POP	DE
+	LD	C,E
+	LD	A,2
+	CALL	SPCS
+	LD	B,8
+	LD	HL,TBFLG
+AFLAL
+	LD	A,".
+	RL	E
+	JR	NC,AFLP1
+	LD	A,(HL)
+AFLP1
+	CALL	OC
+	INC	HL
+	DJNZ	AFLAL
+	LD	E,C
+	LD	A,2
+	CALL	SPCS
+	JP	HEX2S
+;
+AFPRIM
+	LD	A,"'
+	CALL	OC
+	LD	A,32
+	JP	OC
+;
+;
+DUMP
+	CALL	DEDUTR
+	LD	(IX+FS),8
+DUMPL1
+	CALL	DUMP1
+	CALL	KEY2
+	JR	NZ,DUMPL1
+	JP	ORT		; Print a CR
+DUMP1
+	LD	A,(STOR)
+	CP	8
+	PUSH	AF
+	CALL	Z,PADR
+	POP	AF
+	LD	(SPO),A		; screen write pos column
+	PUSH	AF
+	LD	HL,(PC)
+	CALL	KEEPH
+	LD	E,A
+	INC	HL
+	LD	(PC),HL
+	LD	A,24
+	CALL	OUTNB2
+	POP	AF
+	SUB	8
+	SRL	A
+	SRL	A
+	ADD	A,42
+	LD	(SPO),A		; screen write pos column
+	LD	A,E
+	RES	7,A
+	CP	32
+	JR	NC,DUMPP2
+	LD	A,".
+DUMPP2	CALL	OC
+	LD	A,(STOR)
+	ADD	A,4
+	CP	38
+	LD	(STOR),A
+	RET	C
+	LD	A,8
+	LD	(STOR),A
+	JP	ORT		; Print a CR
+;
+;
+DESS
+	CALL	DEDUTR
+	LD	HL,(PC)
+	LD	(BORG),HL
+	LD	IY,WORKZ
+	LD	B,16
+DESSIL2
+	PUSH	BC
+	CALL	INPUT3
+	DEFM	Text?
+	DEFB	^
+	JR	Z,DESSIL1
+	CALL	DMSTZ
+	CALL	INPUT3
+	DEFM	Code?
+	DEFB	^
+	JR	Z,DESSIL1
+	CALL	DMSTZ
+	POP	BC
+	DJNZ	DESSIL2
+	PUSH	AF
+DESSIL1
+	POP	BC
+	CALL	INPUT3
+	DEFM	END
+	DEFB	^
+	RET	Z
+	LD	HL,(BORG)
+	SBC	HL,BC
+	JR	NC,DESSIL1
+	LD	(EDC),BC	; End of code to be disassembled
+	CALL	DMSTZ
+	SET	4,(IX+F3)
+	LD	HL,(PTEXT)
+	CALL	NEXLIN
+	LD	(PTEXT),HL
+	PUSH	HL
+	CALL	USESCR
+	SET	4,(IX+F1)
+	CALL	CANW
+	CALL	CCOM
+	CALL	DEMON
+	RES	4,(IX+F1)
+	LD	HL,(BORG)
+	LD	(PC),HL
+	CALL	DEMON
+	CALL	CCOM
+	CALL	CANS
+	POP	HL
+	LD	(PTEXT),HL
+	RES	4,(IX+F3)
+	JP	EDIT2
+;
+DMSTZ
+	LD	(IY+0),C
+	LD	(IY+1),B
+	INC	IY
+	INC	IY
+	RET
+;
+DEMON
+	LD	IY,WORKZ
+DEMONL1
+	CALL	DESSL1
+	RET	NC
+	INC	IY
+	INC	IY
+	CALL	CRDFB
+	RET	NC
+	INC	IY
+	INC	IY
+	JR	DEMONL1
+;
+DESSL1
+	CALL	TSFID
+	LD	(PILCA),HL
+	RET	NC
+	CALL	TSLMT
+	RET	C
+	BIT	4,(IX+F1)
+	CALL	Z,CRELAB
+	LD	HL,(PC)
+	CALL	DESAC
+	LD	(PC),HL
+	BIT	4,(IX+F1)
+	JR	Z,DESSP1
+	CALL	DLAB
+	JR	DESSL1
+DESSP1
+	LD	A,D
+	ADD	A,|
+	CALL	OC
+	LD	A,D
+	CALL	DTSRL
+	JR	Z,DESS2P1
+	CALL	DTSAB
+	JR	NZ,DESS2P2
+DESS2P1	SET	4,(IX+F2)
+DESS2P2
+	CALL	CDOPS
+	RES	4,(IX+F2)
+	CALL	DLIN
+	JR	DESSL1
+;
+DLAB
+	LD	A,D
+	LD	DE,(PILCA)
+	CALL	DTSRL
+	JR	Z,DLABR
+	CALL	DTSAB
+	RET	NZ
+	CALL	TSRG
+	RET	NC
+	CALL	FTDLAB
+	LD	(HL),|
+DLABAP1
+	RET	Z
+	INC	HL
+	EX	DE,HL
+	LD	HL,PILCA
+	LDI
+	LDI
+	XOR	A
+	LD	(DE),A
+	RET
+DLABR
+	CALL	TSRG
+	RET	NC
+	CALL	FTDLAB
+	PUSH	AF
+	INC	(HL)
+	POP	AF
+	JR	DLABAP1
+;
+TSRG
+	LD	HL,(BORG)
+	SCF
+	SBC	HL,DE
+	RET	NC
+	LD	HL,(EDC)	; End of code to be disassembled
+	SBC	HL,DE
+	CCF
+	RET
+;
+CRELAB
+	CALL	FTDLAB
+	RET	NZ
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	CP	7
+	JR	NC,CRLBP1
+	DEC	A
+	JR	Z,CRLBP2
+;
+	LD	A,"R
+	CALL	DOLAB
+	JR	DLIN
+CRLBP2
+	LD	A,"R
+	JR	DOLAB
+CRLBP1
+	PUSH	DE
+	CALL	CCOM
+	POP	DE
+	LD	A,"W
+	CALL	DOLAB
+DLIN
+	CALL	ORT		; Print a CR
+	LD	HL,WORK
+	CALL	ADDLIN
+	LD	(PTEXT),HL
+	JP	CANW
+;
+CCOM
+	LD	A,^
+	CALL	OC
+	JR	DLIN
+;
+DOLAB
+	CALL	OC
+	LD	A,20
+	JP	OUTNB2
+;
+DTSRL
+	CP	26
+	RET	Z
+	CP	29
+	RET
+DTSAB
+	CP	30
+	RET	Z
+	CP	32
+	RET	NZ
+	LD	A,B
+	CP	64
+	RET
+;
+CRDFB
+	CALL	TSFID
+	RET	NC
+	CALL	TSLMT
+	RET	C
+	BIT	4,(IX+F1)
+	JR	NZ,CRDFBP1
+	LD	A,195
+	CALL	ODFB
+	LD	B,3
+CRDFBL1
+	PUSH	BC
+	CALL	TSFID
+	JR	NC,CRDBP5
+	CALL	TSLMT
+	JR	C,CRDBP5
+	LD	A,",
+	CALL	ODFB
+	POP	BC
+	DJNZ	CRDFBL1
+	PUSH	BC
+CRDBP5
+	POP	BC
+	CALL	DLIN
+	JR	CRDFB
+CRDFBP1
+	INC	HL
+	LD	(PC),HL
+	JR	CRDFB
+;
+ODFB
+	CALL	OC
+	CALL	KEEPH
+	LD	E,A
+	LD	A,10
+	CALL	OUTNB2
+	INC	HL
+	LD	(PC),HL
+	RET
+
+
+;
+; ???
+;
+FTDLAB
+	LD	HL,(VAR)	; The symbols table
+FTDLBL1
+	LD	A,(HL)
+	CP	1		; zero is end of table marker
+	RET	C		; returns with Z down
+	INC	HL
+	LD	A,(PILCA)
+	CP	(HL)
+	INC	HL
+	JR	NZ,FTDLBP1
+	LD	A,(PILCA+1)
+	CP	(HL)
+	JR	Z,FTDLBP2
+FTDLBP1
+	INC	HL
+	JR	FTDLBL1
+FTDLBP2
+	DEC	HL
+	DEC	HL
+	LD	A,(HL)
+	RET
+;
+TSFID
+	LD	HL,(EDC)	; End of code to be disassembled
+	LD	DE,(PC)
+	SCF
+	SBC	HL,DE
+	CCF
+	EX	DE,HL
+	RET
+TSLMT
+	LD	DE,(PC)
+	LD	L,(IY+0)
+	LD	H,(IY+1)
+	SCF
+	SBC	HL,DE
+	EX	DE,HL
+	RET
+;
+TBDS
+	DEFB	50,0,96,7
+	DEFB	58,0,7,96
+	DEFB	34,0,96,10
+	DEFB	42,0,10,96
+	DEFB	195,32,64,^
+	DEFB	211,24,96,7
+	DEFB	219,23,7,96
+	DEFB	201,31,^,0
+	DEFB	8,27,12,12
+	DEFB	235,27,9,10
+	DEFB	227,27,43,10
+	DEFB	217,43,^,0
+	DEFB	233,32,42,^
+	DEFB	249,0,11,10
+	DEFB	243,44,^,0
+	DEFB	251,45,^,0
+	DEFB	70,28,80,^
+	DEFB	86,28,81,^
+	DEFB	94,28,82,^
+	DEFB	71,0,13,7
+	DEFB	79,0,14,7
+	DEFB	87,0,7,13
+	DEFB	95,0,7,14
+	DEFB
+;
+TBKK
+	DEFM	NZZ'NCC'POPEP'M'
+	DEFB
+TBR16	DEFM	BCDEHLSPAFIXIY
+	DEFB
+TBR8	DEFM	BCDEHL@AIR
+TBFLG	DEFM	SZ H VNC
+TBRGT	DEFM	HLDEBC
+;
+TBMSG
+	DEFM	Synta
+	DEFB	"x"+|
+	DEFM	Redefine labe
+	DEFB	"l"+|
+	DEFM	Relative numbe
+	DEFB	"r"+|
+	DEFM	Integer out of rang
+	DEFB	"e"+|
+	DEFM	Illegal characte
+	DEFB	"r"+|
+	DEFM	Illegal referenc
+	DEFB	"e"+|
+	DEFM	Bad OR
+	DEFB	"G"+|
+	DEFB	"I,"/,"O"+|
+	DEFM	Bad memor
+	DEFB	"y"+|
+	DEFM	No table spac
+	DEFB	"e"+|
+	DEFM	Brea
+	DEFB	"k"+|
+	DEFM	Label absen
+	DEFB	"t"+|
+	DEFM	Bad locatio
+	DEFB	"n"+|
+;
+	DEFB	"D,"e,"c,"."+|
+	DEFB	"H,"e,"x,"."+|
+	DEFB	"C,"a,"p,"s"+|
+	DEFB	32,32,32,32+|
+	DEFB	13
+	DEFM	Copyright 1984-2015 Pascal Seguy
+	DEFB	13
+	IF	VRS&1
+	DEFM	DAMS 1.2-dev
+	END
+	IF	VRS&2
+	DEFM	DAMS 1.2
+	END
+	DEFB	13,13+|
+	DEFB	"R,"O,"M"+|
+	DEFB	"R,"A,"M"+|
+	DEFB	32,"B,"y,"t,"e,"s,13+|
+;
+TBAS1
+	DEFB	0,7,15,23
+	DEFB	31,39,47,55
+	DEFB	63,118,217,243
+	DEFB	251,68,69,77
+	DEFB	103,111,160,161
+	DEFB	162,163,168,169
+	DEFB	170,171,176,177
+	DEFB	178,179,184,185
+	DEFB	186,187
+TBAS2
+	DEFB	0,7,96,58
+	DEFB	0,96,7,50
+	DEFB	0,10,96,42
+	DEFB	0,96,10,34
+	DEFB	0,7,40,10
+	DEFB	0,7,41,26
+	DEFB	0,40,7,2
+	DEFB	0,41,7,18
+	DEFB	27,12,12,8
+	DEFB	27,9,10,235
+	DEFB	27,43,10,227
+	DEFB	0,11,10,249
+	DEFB	0,16,7,71
+	DEFB	0,17,7,79
+	DEFB	0,7,16,87
+	DEFB	0,7,17,95
+	DEFB	28,0,^,70
+	DEFB	28,1,^,86
+	DEFB	28,2,^,94
+TBMN
+	DEFB	"L,"D"+|
+	DEFB	"I,"N,"C"+|
+	DEFB	"D,"E,"C"+|
+	DEFB	"A,"D,"D"+|
+	DEFB	"A,"D,"C"+|
+	DEFB	"S,"U,"B"+|
+	DEFB	"S,"B,"C"+|
+	DEFB	"A,"N,"D"+|
+	DEFB	"X,"O,"R"+|
+	DEFB	"O,"R"+|
+	DEFB	"C,"P"+|
+	DEFB	"P,"U,"S,"H"+|
+	DEFB	"P,"O,"P"+|
+	DEFB	"B,"I,"T"+|
+	DEFB	"R,"E,"S"+|
+	DEFB	"S,"E,"T"+|
+	DEFB	"R,"L,"C"+|
+	DEFB	"R,"R,"C"+|
+	DEFB	"R,"L"+|
+	DEFB	"R,"R"+|
+	DEFB	"S,"L,"A"+|
+	DEFB	"S,"R,"A"+|
+	DEFB	"S,"R,"L"+|
+	DEFB	"I,"N"+|
+	DEFB	"O,"U,"T"+|
+	DEFB	"R,"S,"T"+|
+	DEFB	"D,"J,"N,"Z"+|
+	DEFB	"E,"X"+|
+	DEFB	"I,"M"+|
+	DEFB	"J,"R"+|
+	DEFB	"C,"A,"L,"L"+|
+	DEFB	"R,"E,"T"+|
+	DEFB	"J,"P"+|
+	DEFB	"N,"O,"P"+|
+	DEFB	"R,"L,"C,"A"+|
+	DEFB	"R,"R,"C,"A"+|
+	DEFB	"R,"L,"A"+|
+	DEFB	"R,"R,"A"+|
+	DEFB	"D,"A,"A"+|
+	DEFB	"C,"P,"L"+|
+	DEFB	"S,"C,"F"+|
+	DEFB	"C,"C,"F"+|
+	DEFB	"H,"A,"L,"T"+|
+	DEFB	"E,"X,"X"+|
+	DEFB	"D,"I"+|
+	DEFB	"E,"I"+|
+	DEFB	"N,"E,"G"+|
+	DEFB	"R,"E,"T,"N"+|
+	DEFB	"R,"E,"T,"I"+|
+	DEFB	"R,"R,"D"+|
+	DEFB	"R,"L,"D"+|
+	DEFB	"L,"D,"I"+|
+	DEFB	"C,"P,"I"+|
+	DEFB	"I,"N,"I"+|
+	DEFB	"O,"U,"T,"I"+|
+	DEFB	"L,"D,"D"+|
+	DEFB	"C,"P,"D"+|
+	DEFB	"I,"N,"D"+|
+	DEFB	"O,"U,"T,"D"+|
+	DEFB	"L,"D,"I,"R"+|
+	DEFB	"C,"P,"I,"R"+|
+	DEFB	"I,"N,"I,"R"+|
+	DEFB	"O,"T,"I,"R"+|
+	DEFB	"L,"D,"D,"R"+|
+	DEFB	"C,"P,"D,"R"+|
+	DEFB	"I,"N,"D,"R"+|
+	DEFB	"O,"T,"D,"R"+|
+	DEFB	"D,"E,"F,"B"+|
+	DEFB	"D,"E,"F,"W"+|
+	DEFB	"D,"E,"F,"M"+|
+	DEFB	"D,"E,"F,"S"+|
+	DEFB	"E,"Q,"U"+|
+	DEFB	"O,"R,"G"+|
+	DEFB	"E,"N,"T"+|
+	DEFB	"I,"F"+|
+	DEFB	"E,"L,"S,"E"+|
+	DEFB	"E,"N,"D"+|
+	DEFB
+TEXT

@@ -1,0 +1,141 @@
+README file for DAMS.
+
+ DAMS - An integrated Editor/Assembler/debugger for the Amstrad CPC.
+ Copyright (C) 1984-2015  Pascal Séguy
+
+
+Background
+----------
+As a computer enthusiast, I wrote DAMS for my own on a 48Ko Sinclair
+ZX Spectrum, I was twenty years old. The next year, in summer 1985,
+I ported it on Amstrad CPC and DAMS has been marketed for this computer
+by the French company Micro-Application for five years.
+
+Then I've been working in computing science on different platforms,
+with other programming languages, forgetting everything up to the Z80
+instruction set, and DAMS usage itself.
+
+In 1999 I had the opportunity to import DAMS sources from the unique
+3" floppy holding them for a decade in my attic, to my hard disk,
+saving them from definitive loss.
+
+Today (March 2015), thirty years after, it appears that DAMS has not
+only be an appreciated tool by the CPC's software developers, but
+there is still a small community using/hacking/improving it.
+
+
+Goals
+-----
+I wrote DAMS on a 48Ko computer with no disk, only (audio K7) tapes!
+I had to keep in mind to save bytes, not only in DAMS code size, but
+also in sources file to be able to edit and assemble them. The
+consequence is that symbols/labels were shortened, and I wrote no
+comment at all!
+
+I've started that tricky job to comment the source code thirty years 
+after, and I've decided to open the project for the DAMS user's 
+community be able to help me to comment it, fix bugs, and maybe 
+improve it.
+
+
+Prerequisite
+------------
+The project contains a helpful Makefile intended to run on an
+unix like environment, with g++ and libboost-dev. I've done this 
+stuff on Ubuntu trusty.
+For this Makefile to run, you also need iDSK 
+(http://sid.cpc.free.fr/iDSK.0.13-src.tgz) to generate a CPC disk image.
+
+
+Getting started
+---------------
+Clone my DAMS repository on github. Command line:
+
+	git clone git@github.com:pseguy/dams.git
+
+DAMS source code is a unique text file named 'dams.dams'. There is 
+also a tool 'damsdecode' and a Makefile (tested on Linux) that builds 
+a ready to use 'DAMS dev' floppy image with a special DAMS developement 
+version executable capable to generate DAMS itself, and DAMS sources 
+file in DAMS format. To make this floppy image run:
+
+	make dams.dsk
+
+Then you can either write a real floppy or jump into your favorite CPC 
+emulator with this disk image.
+
+
+Build DAMS
+-----------
+On your CPC or from your favorite emulator, run DAMS from the previously
+generated dams.dsk floppy. Load it at #1000. Be sure the version printed 
+is at least:
+
+	"DAMS 1.2-dev"
+
+Then, at DAMS prompt, set himem to 28990:
+	M 28990
+
+Assemble with the 'generate relocation table' option:
+	F128,D1.BIN
+
+At the question "Object code address ?", answer:
+	29000
+
+During assembly, the screen is filled with garbage (actually,
+the symbols table), don't mind.
+
+Once assembled, save it:
+	P2,DAMS.BIN
+
+You've got now a new DAMS, ready to use.
+
+
+Maintaining sources
+-------------------
+I edit DAMS sources on my Linux host, working on the 'dams.dams' file,
+and I use the damsdecode tool (that I've made for this purpose) for 
+exporting sources on the target CPC.
+
+To make DAMS real source files for assembly on a CPC, encode it:
+
+		./damsdecode -e -o D1.BIN <dams.dams
+
+This create 3 files: D1.BIN, D2.BIN, D3.BIN ('make bin' is a shortcut)
+You can transfer these files on CPC for assembly.
+
+Note: You could recreate dams.dams from the D?.BIN file:
+		./damsdecode <D1.BIN >dams.dams
+		
+but beware that all comments would be lost since the encoder strip
+them by default.
+
+
+Contribute
+----------
+I've done the most important part to save the source code
+of this project from oblivion.
+
+Help would be appreciated in the following points:
+
+o Source code comments. (I think I've done the most tricky part,
+  everything else remains to do).
+
+o Bug fix (keyboard ESC, numeric keypad, P2 after 'A0'...)
+
+o Provide French and English documentation. Unfortunately,
+  I have no backup of the original documentation I wrote.
+
+Feel free to fork DAMS on github and send me pull requests
+https://help.github.com/articles/using-pull-requests/ .
+
+
+License
+-------
+GNU GPL, See the 'LICENSE' file.
+
+
+Contact
+-------
+Let me know what you have done or plan to do with DAMS, email
+me at <pascal.seguy@laposte.net>.
