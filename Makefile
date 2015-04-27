@@ -5,7 +5,8 @@
 
 CXXFLAGS= -g -Wall
 
-all: damsdecode
+all: damsdecode damsman-fr.html
+
 
 
 install: all
@@ -25,12 +26,13 @@ dams.dsk: D1.BIN D2.BIN D3.BIN DAMS.BAS DAMS.BIN
 	iDSK $@ -i D3.BIN -t 1
 
 
+damsman-fr.html: damsman-fr.adoc
+	asciidoc --unsafe --attribute=sgml -a icons damsman-fr.adoc
+
 clean:
 	rm -f damsdecode
 
 clobber: clean
 	rm -f D1.BIN D2.BIN D3.BIN
 	rm -f dams.dsk
-
-
-
+	rm -f damsman-fr.html

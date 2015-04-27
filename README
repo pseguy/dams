@@ -32,19 +32,23 @@ also in sources file to be able to edit and assemble them. The
 consequence is that symbols/labels were shortened, and I wrote no
 comment at all!
 
-I've started that tricky job to comment the source code thirty years 
-after, and I've decided to open the project for the DAMS user's 
-community be able to help me to comment it, fix bugs, and maybe 
+I've started that tricky job to comment the source code thirty years
+after, and I've decided to open the project for the DAMS user's
+community be able to help me to comment it, fix bugs, and maybe
 improve it.
 
 
 Prerequisite
 ------------
 The project contains a helpful Makefile intended to run on an
-unix like environment, with g++ and libboost-dev. I've done this 
-stuff on Ubuntu trusty.
-For this Makefile to run, you also need iDSK 
+unix like environment, with g++ and libboost-dev (I've done this
+stuff on Ubuntu trusty).
+
+For this Makefile to run, you also need iDSK
 (http://sid.cpc.free.fr/iDSK.0.13-src.tgz) to generate a CPC disk image.
+
+You need 'asciidoc' to generate the DAMS user's manual.
+
 
 
 Getting started
@@ -53,22 +57,22 @@ Clone my DAMS repository on github. Command line:
 
 	git clone git@github.com:pseguy/dams.git
 
-DAMS source code is a unique text file named 'dams.dams'. There is 
-also a tool 'damsdecode' and a Makefile (tested on Linux) that builds 
-a ready to use 'DAMS dev' floppy image with a special DAMS developement 
-version executable capable to generate DAMS itself, and DAMS sources 
+DAMS source code is a unique text file named 'dams.dams'. There is
+also a tool 'damsdecode' and a Makefile (tested on Linux) that builds
+a ready to use 'DAMS dev' floppy image with a special DAMS developement
+version executable capable to generate DAMS itself, and DAMS sources
 file in DAMS format. To make this floppy image run:
 
 	make dams.dsk
 
-Then you can either write a real floppy or jump into your favorite CPC 
+Then you can either write a real floppy or jump into your favorite CPC
 emulator with this disk image.
 
 
 Build DAMS
 -----------
 On your CPC or from your favorite emulator, run DAMS from the previously
-generated dams.dsk floppy. Load it at #1000. Be sure the version printed 
+generated dams.dsk floppy. Load it at #1000. Be sure the version printed
 is at least:
 
 	"DAMS 1.2-dev"
@@ -94,7 +98,7 @@ You've got now a new DAMS, ready to use.
 Maintaining sources
 -------------------
 I edit DAMS sources on my Linux host, working on the 'dams.dams' file,
-and I use the damsdecode tool (that I've made for this purpose) for 
+and I use the damsdecode tool (that I've made for this purpose) for
 exporting sources on the target CPC.
 
 To make DAMS real source files for assembly on a CPC, encode it:
@@ -106,7 +110,7 @@ You can transfer these files on CPC for assembly.
 
 Note: You could recreate dams.dams from the D?.BIN file:
 		./damsdecode <D1.BIN >dams.dams
-		
+
 but beware that all comments would be lost since the encoder strip
 them by default.
 
@@ -123,8 +127,8 @@ o Source code comments. (I think I've done the most tricky part,
 
 o Bug fix (keyboard ESC, numeric keypad, P2 after 'A0'...)
 
-o Provide French and English documentation. Unfortunately,
-  I have no backup of the original documentation I wrote.
+o Provide English documentation. The DAMS user's manual is to be
+  translated from French (damsman-fr.adoc).
 
 Feel free to fork DAMS on github and send me pull requests
 https://help.github.com/articles/using-pull-requests/ .

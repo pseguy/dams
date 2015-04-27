@@ -59,7 +59,7 @@ STK2	DEFW			; The user's stack pointer
 STKP	DEFW			; Our SP backup
 LPC	DEFW			; The assembler 'virtual' write pointer.
 SPO	DEFW			; Screen write coordinates: low byte = columns, High byte = line. zero based.
-END	DEFW			; DAMS brk address. (fisrt address not used by DAMS)
+END	DEFW			; DAMS brk address. (first address not used by DAMS)
 PTEXT	DEFW			; write pointer in source code
 PTWO	DEFW			; read pointer in source code
 CURPO	DEFB			; cursor position in current line (zero based)
@@ -76,7 +76,7 @@ FLG0	DEFB
 ;
 ; FLG1 bit field
 ;	2: There's another file to assemble
-; 	6: used for conditionnal assembly
+; 	6: used for conditional assembly
 FLG1	DEFB
 
 
@@ -101,7 +101,7 @@ FLG3	DEFB
 
 ENTP	DEFW			; Assembled program entry point
 BORG	DEFW			; Assembled program code address
-EDC	DEFW			; End of code to be unassembeld
+EDC	DEFW			; End of code to be unassembled
 PILCA	DEFW			; arithmetic expression result.
 DEPL	DEFW			; a temporary var ?
 CHAN	DEFW			; The 'print character' function pointer
@@ -186,7 +186,7 @@ RLGP5
 	POP	DE
 	POP	HL
 	LD	(LPC),SP	; save amsdos SP (LPC used as a temporary var ?)
-	CALL	INITR		; save curent registers values
+	CALL	INITR		; save current registers values
 	LD	HL,(LPC)
 	LD	(STK2),HL	; will be the user's stack
 	CALL	INITC1
@@ -194,7 +194,7 @@ RLGP5
 	; Init editor strings (search/replace)
 	;
 	LD	HL,STRG1	; string 1
-	LD	BC,13*256+32	; Cariage return and space
+	LD	BC,13*256+32	; Carriage return and space
 	LD	(HL),C
 	INC	HL
 	LD	(HL),B
@@ -280,7 +280,7 @@ WORKZ	EQU	WORK+FM+5	; A transient stack top, and a buffer
 ; Pad with 0, an LW+48 area length
 ; starting at WORK.
 ; This area contains startup time code
-; that will be reaffected after startup
+; that will be reafected after startup
 ;
 	DEFS	LW+48+WORK-$,0
 
@@ -795,7 +795,7 @@ SPCSL1	LD	A,32
 	RET
 
 ;
-; Output a 'cariage return'
+; Output a 'carriage return'
 ;
 ORT	LD	A,13
 	JR	OC
@@ -814,7 +814,7 @@ TAB
 ; Print one caracter
 ;
 OC
-	EXX			; back to amdos registers set
+	EXX			; back to amsdos registers set
 	LD	DE,OCPF
 	PUSH	DE
 	LD	BC,(SPO)	; Screen write coordinates
@@ -1636,7 +1636,7 @@ SCANL1
 SCANP1				; operator found
 	LD	C,7
 	ADD	HL,BC		; base operator's switch tab
-	LD	C,(HL)		; fecth op offset
+	LD	C,(HL)		; fetch op offset
 	ADD	HL,BC		; HL is pointer to function op
 	EX	(SP),HL		; HL back to accumulator
 	PUSH	HL
@@ -1904,7 +1904,7 @@ OP5
 	CALL	OP3		; multiply
 	EX	DE,HL
 	POP	HL
-	JR	OP2		; substract
+	JR	OP2		; subtract
 
 ;
 ; Operator '&' (logical AND)
@@ -2112,10 +2112,10 @@ NEW2
 ENTRY
 	DI
 	LD	(LPC),SP	; save SP (use LPC as a temporary var ?)
-	CALL	INITR		; save curent registers value
+	CALL	INITR		; save current registers value
 	LD	HL,(LPC)
 	LD	(STK2),HL	; store user's stack pointer
-	CALL	STMODE		; sets creen mode
+	CALL	STMODE		; set screen mode
 	CALL	NEW2
 	JR	MONIT
 
@@ -2323,7 +2323,7 @@ SAVP1	CALL	FDLEN
 	LD	E,C
 	JR	SAVEP5
 SAVE2
-	LD	HL,(EDCSV)	; fecth end of object code
+	LD	HL,(EDCSV)	; fetch end of object code
 	LD	A,H
 	OR	L
 	JP	Z,ERR5		; check for something's been assembled
@@ -2336,7 +2336,7 @@ SAVE2
 	SBC	HL,DE		; compute object code length
 	EX	DE,HL
 	JR	C,IOER8
-	INC	DE		; cansel carry
+	INC	DE		; cancel carry
 	LD	BC,(ENTSV)	; no use!!
 	JR	SAVEP5
 SAVE3
@@ -2761,7 +2761,7 @@ AFFBRK
 	JP	ORT		; Print a CR and return.
 
 ;
-; Install a breakpoint at BC, cancelling a previous one
+; Install a breakpoint at BC, canceling a previous one
 ;
 SWAP
 	PUSH	BC
@@ -2783,14 +2783,14 @@ SWAP
 	LDIR			; patch the user's code with a jump to our breakpoint entry
 	RET
 
-SWAPZ				; A 'jump to dams debuger' sample code used by the BP installer
+SWAPZ				; A 'jump to dams debugger' sample code used by the BP installer
 	DEFB	195		; 195 => opcode 'jump'
 	DEFW	BRKENT
 
 ;
 *F,D2.BIN
 ;
-; DAMS - An integrated Editor/Assembler/debugger for the AMSMTRAD CPC.
+; DAMS - An integrated Editor/Assembler/debugger for the AMSTRAD CPC.
 ; Copyright 1984-2015  Pascal Séguy  <pascal.seguy@laposte.net>
 ;
 ; File D2.BIN - Editor and assembler
@@ -4754,7 +4754,7 @@ DORGP2
 	LD	L,C
 	CALL	TSLOC
 	JR	C,TENDLI
-	LD	BC,(BORG)	; fecth previous ORG
+	LD	BC,(BORG)	; fetch previous ORG
 	SBC	HL,BC
 	ADD	HL,BC
 	JR	NC,TENDLI	; cannot assemble below previous one
@@ -4767,7 +4767,7 @@ TENDLI				; parse end of line
 TENDLIP1 JP	ERR0
 
 ;
-; Fecth next character,
+; Fetch next character,
 ; EOL are unexpected
 ;
 TFILI
@@ -6112,7 +6112,7 @@ RUNP
 	LD	A,(DE)
 	CP	13		; CR ?
 	JR	Z,RUN1
-	CP	"$"		; Continue after a beakpoint
+	CP	"$"		; Continue after a breakpoint
 	PUSH	AF
 	CALL	SCANL		; Arithmetic expression parser
 	POP	AF
@@ -6160,7 +6160,7 @@ RUNC1
 	RES	5,(IX+F3)	; reset flag
 	LD	HL,(BRKPT)
 	LD	(PC),HL
-	CALL	AFFBRK		; dispaly the BP
+	CALL	AFFBRK		; display the BP
 	LD	BC,0
 	JP	SWAP		; cancel it and return.
 
@@ -6170,8 +6170,8 @@ RUNC1
 RTRAC
 	SET	3,(IX+F3)	; in fast trace mode
 	CALL	DEDUTR
-	LD	HL,(STK2)	; fecth user's SP
-	INC	HL		; make room for return addrr (?)
+	LD	HL,(STK2)	; fetch user's SP
+	INC	HL		; make room for return addr (?)
 	INC	HL
 	LD	(BORG),HL	; save in temp storage
 RTRCL1
@@ -6246,7 +6246,7 @@ EXECIS
 	LD	B,0
 	LD	(IX+FS),B
 	LD	DE,(LPC)
-	CALL	KEEP		; fecth code at DE
+	CALL	KEEP		; fetch code at DE
 	CP	118		; 'HALT' ?
 	RET	Z		; ignore
 	CP	251		; 'EI' ?
@@ -6391,7 +6391,7 @@ INIT2
 	RET
 
 ;
-; Save curent CPU registers values in PC area
+; Save current CPU registers values in PC area
 ;
 INITR
 	LD	(STKP),SP	; save our SP
