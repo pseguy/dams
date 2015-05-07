@@ -367,8 +367,8 @@ EXT
 	DI
 	EXX
 	EX	AF,AF
-	LD	BC,#7F8E	; ???
-	OR	A
+	LD      bc,#7F8E ; Disconnect Upper & Lower Rom+Mode 2
+ 	OR	A
 	EX	AF,AF
 	EXX
 	EI
@@ -622,7 +622,7 @@ AFMODEP2	CALL	POMSG
 	RET
 
 ;
-; Scroll down the sceen
+; Scroll down the screen
 ;
 SCROLD
 	LD	B,24
