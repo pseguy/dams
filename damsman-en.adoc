@@ -1,109 +1,115 @@
-DAMS manuel utilisateur
-=======================
+DAMS manual
+===========
 Pascal Séguy <pascal.seguy@laposte.net>
 :toc:
 :icons:
 :numbered:
 
 
-DAMS est un logiciel permettant d’écrire et mettre au point des programmes en
-langage machine sur les micro ordinateurs AMSTRAD CPC 464, 664 et 6128.
+DAMS is a software package for writing and developing machine language
+programs on the Amstrad CPC 464, 664 and 6128 range of microcomputers.
 
-Il se compose d'un éditeur, un assembleur, un désassembleur, un dump et une trace.
+It consists of an editor, an assembler, a disassembler, a dump tool,
+and a tracing program (debugger).
 
-Sa simplicité d'utilisation, ses nombreuses commandes et sa rapidité d'exécution permettront
-de développer d'importants programmes en langage machine.
-
+Its simplicity of use, numerous options and speed of execution will
+allow the creation of complex and sophisticated programs in machine
+language.
 
 
 == Introduction ==
 
 
-DAMS est un logiciel intégrant un assembleur, un moniteur et un désassembleur
-symbolique pour développer et mettre au point facilement des programmes en langage
-machine.
+DAMS is a comprehensive software package consisting of an assembler, a
+monitor and a symbolic disassembler which will allow you to easily
+develop and polish your machine language programs.
 
-Les trois modules sont co-résidents en mémoire ce qui assure une grande souplesse
-d'utilisation.
-Vous pouvez notamment utiliser un éditeur plein écran, un assembleur immédiat,
-un désassembleur symbolique, une trace et beaucoup d'autres fonctions très puissantes.
+These three modules are co-resident in memory, which ensures a great
+deal of flexibility in its use.  You can use a full-screen editor, an
+assembler, a symbolic disassembler, a debugger and many other powerful
+features.
 
-L’éditeur est du type plein écran et sans numéro de ligne.
-Des commandes spéciales permettent la recherche ou la substitution de mots ou de
-phrases, l’effacement, la duplication et le déplacement de blocs de textes.
+The editor works in full screen mode, without line numbers.  Special
+commands allow to quickly search and replace words or sentences, as
+well as the removal, duplication and movement of text blocks.
 
-L’assembleur Z80 est doté de pseudos instructions d'assemblage telles que
-"IF", "THEN", "ELSE", et "DEFB", "DEFW" etc...
-Il permet l'assemblage de plusieurs blocs de texte source.
-La table des labels générée peut être ensuite utilisée par le moniteur,
-le désassembleur et le mode trace.
+The Z80 assembler supports many pseudo assembly instructions (also
+known as assembler directives) such as "IF", "THEN", "ELSE", "DEFB",
+"DEFW", etc.  It allows the assembly of several blocks of source code.
+The generated symbol table can then be used by the monitor, the
+disassembler and the debugger.
 
-Le moniteur comprend plus de 15 commandes pour utiliser trace, dump, affichage
-et modification des registres, exécution d'un programme...
+The monitor includes more than 15 commands, including features such as
+interactive debugging, memory dumps, display and modification of
+registers, program execution, etc.
 
-Le désassembleur peut créer du texte source à partir d'un programme en langage
-machine avec génération automatique de labels et "DEFB"..
-Le source peut être modifié à partir de l’éditeur et réassemblé.
+The disassembler is able to create source text from binary code, with
+automatic generation of labels and assembler directives.  The
+resulting source code can then be edited using the editor and
+reassembled again.
 
-La trace comprend un mode rapide pour mettre au point des routines importantes.
-Chaque instruction est analysée avant son exécution pour éviter tout blocage système.
+The debugger features a quick mode to debug important routines.  Each
+statement is scanned before execution to prevent it from hanging your
+system.
 
-DAMS est entièrement relogeable et est bien évidemment écrit en langage machine.
-
+DAMS is fully relocatable and is, as you may have guessed, written in
+machine language itself.
 
 
 === Structure ===
 
-DAMS occupe une dizaine de Ko en mémoire.
-Il contient sa propre pile machine et sa propre routine d'affichage,
-ce qui lui garantit son immunité lors d'exécution de routines par la trace.
-Il fait néanmoins directement appel à deux routines en ROM qui permettent
-de saisir les touches du clavier.
 
-Les autres appels de routines extérieures se font lors d'exécutions de
-commandes utilisant un périphérique et toujours par les vecteurs du système d’exploitation
-de manière à pouvoir dévier ces routines.
-Par exemple, ceci permet d’utiliser un lecteur de cassette ou de disquette
-lors d’exécution des commandes `P` ou `G`.
+DAMS itself uses requires around 12 KB of RAM.  It uses its own
+hardware stack and display routines to minimize any issues while
+debugging your code.  However, it makes direct use of two firmware
+routines to get user input from the keyboard.
 
-A la suite de DAMS se trouve le fichier texte et une éventuelle table de symboles.
-Entre ces 2 zones se trouve une plage de 256 octets qui est toujours dans la ram
-centrale de 32 K et qui contient la pile machine et quelques routines.
-L'adresse de fin de cette zone est donnée par la valeur de Hmem (commande `X`).
+Other external routine calls are made during the execution of commands
+that involve any device or peripherial (e.g. disk drive). These will
+always be called indirectly using the operating system vectors.  This
+will allow you to, for example, use a cassette or floppy drive when
+executing the `P` or `G` commands.
 
-
-=== Chargement ===
+The memory area just after the DAMS code is used for the program text
+and symbol table (if any).  Between these 2 areas there is a range of
+256 bytes that is located in the central 32 KB of RAM, and contains
+DAMS stack and some additional routines.  The top address of this
+memory area is given by the value of HMEM (command `X`).
 
 
-DAMS est entièrement relogeable et peut-être chargé de l'adresse 1000 à 28000 de plusieurs façons.
+=== Running DAMS ===
+
+
+DAMS is fully relocatable and can be loaded in any address between 1000 to 28000.
 
 ..................................
 RUN "DAMS"
 ..................................
 
-Ceci va charger un programme basic qui va charger DAMS à l'adresse #4000.
+This command will run a BASIC program which loads DAMS at address #4000.
 
-Si pendant le chargement du programme basic vous laissez la touche
-espace enfoncée jusqu'à l'exécution, alors on va vous demander à quelle adresse
-voulez-vous charger DAMS.
+If you keep the space key pressed while the program loads, DAMS will
+ask you at which address should it be located.
 
-Cette méthode de chargement présente l'inconvénient d'effacer un éventuel programme basic déjà existant.
-Pour éviter cela, il suffit de charger directement les codes machine à l'adresse nn que vous choisissez :
+Using the default address (#4000) will cause any BASIC program to be
+removed from memory. To avoid this, you'll need to specify an address
+yourself (in this example, "nn"):
 
 ..............................................................
 MEMORY nn-l:LOAD "DAMS.BIN", nn:CALL nn
 ..............................................................
 
-Dans tous les cas, pour réaccèder à DAMS, il suffira de faire `CALL nn`, "nn" étant l'adresse où vous l'avez chargé.
+To reenter DAMS, it will suffice to execute a `CALL nn` statement,
+where "nn" is the address you decided to load it at.
 
-De même, un programme exécuté par DAMS grâce à la commande `J`,
-peut se terminer non pas par un "RET" mais par un "JP nn".
-Ce point d'entrée sauve le contenu des registres du processeur.
+Similarly, a program executed by DAMS with the `J` command, should not
+end with the "RET" instruction, but with a "JP nn".  This entry point
+will restore the contents of the processor registers.
 
-//////////////////////////////////////////////////////////////////////////////////////////////////
-Un autre point d'entrée qui peut être utilisé est l'adresse du moniteur équivalente à nn+2354.
-Ce point d'entrée ne mémorise cependant pas le contenu des registres.
-//////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////
+As an alternative, you can also use the monitor entry point, located
+at "nn + 2345".  This entry point will *not* restore the registers.
+///////////////////////////////////////////////////////////////////////////
 
 
 == Le moniteur ==
