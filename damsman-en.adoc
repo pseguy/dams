@@ -1,0 +1,1152 @@
+DAMS manual
+===========
+Pascal Séguy <pascal.seguy@laposte.net>
+:toc:
+:icons:
+:numbered:
+
+
+DAMS is a software package for writing and developing machine language
+programs on the Amstrad CPC 464, 664 and 6128 range of microcomputers.
+
+It consists of an editor, an assembler, a disassembler, a dump tool,
+and a tracing program (debugger).
+
+Its simplicity of use, numerous options and speed of execution will
+allow the creation of complex and sophisticated programs in machine
+language.
+
+
+== Introduction ==
+
+
+DAMS is a comprehensive software package consisting of an assembler, a
+monitor and a symbolic disassembler which will allow you to easily
+develop and polish your machine language programs.
+
+These three modules are co-resident in memory, which ensures a great
+deal of flexibility in its use.  You can use a full-screen editor, an
+assembler, a symbolic disassembler, a debugger and many other powerful
+features.
+
+The editor works in full screen mode, without line numbers.  Special
+commands allow to quickly search and replace words or sentences, as
+well as the removal, duplication and movement of text blocks.
+
+The Z80 assembler supports many pseudo assembly instructions (also
+known as assembler directives) such as "IF", "THEN", "ELSE", "DEFB",
+"DEFW", etc.  It allows the assembly of several blocks of source code.
+The generated symbol table can then be used by the monitor, the
+disassembler and the debugger.
+
+The monitor includes more than 15 commands, including features such as
+interactive debugging, memory dumps, display and modification of
+registers, program execution, etc.
+
+The disassembler is able to create source text from binary code, with
+automatic generation of labels and assembler directives.  The
+resulting source code can then be edited using the editor and
+reassembled again.
+
+The debugger features a quick mode to debug important routines.  Each
+statement is scanned before execution to prevent it from hanging your
+system.
+
+DAMS is fully relocatable and is, as you may have guessed, written in
+machine language itself.
+
+
+=== Structure ===
+
+
+DAMS itself uses requires around 12 KB of RAM.  It uses its own
+hardware stack and display routines to minimize any issues while
+debugging your code.  However, it makes direct use of two firmware
+routines to get user input from the keyboard.
+
+Other external routine calls are made during the execution of commands
+that involve any device or peripherial (e.g. disk drive). These will
+always be called indirectly using the operating system vectors.  This
+will allow you to, for example, use a cassette or floppy drive when
+executing the `P` or `G` commands.
+
+The memory area just after the DAMS code is used for the program text
+and symbol table (if any).  Between these 2 areas there is a range of
+256 bytes that is located in the central 32 KB of RAM, and contains
+DAMS stack and some additional routines.  The top address of this
+memory area is given by the value of HMEM (command `X`).
+
+
+=== Running DAMS ===
+
+
+DAMS is fully relocatable and can be loaded in any address between 1000 to 28000.
+
+..................................
+RUN "DAMS"
+..................................
+
+This command will run a BASIC program which loads DAMS at address #4000.
+
+If you keep the space key pressed while the program loads, DAMS will
+ask you at which address should it be located.
+
+Using the default address (#4000) will cause any BASIC program to be
+removed from memory. To avoid this, you'll need to specify an address
+yourself (in this example, "nn"):
+
+..............................................................
+MEMORY nn-l:LOAD "DAMS.BIN", nn:CALL nn
+..............................................................
+
+To reenter DAMS, it will suffice to execute a `CALL nn` statement,
+where "nn" is the address you decided to load it at.
+
+Similarly, a program executed by DAMS with the `J` command, should not
+end with the "RET" instruction, but with a "JP nn".  This entry point
+will restore the contents of the processor registers.
+
+///////////////////////////////////////////////////////////////////////////
+As an alternative, you can also use the monitor entry point, located
+at "nn + 2345".  This entry point will *not* restore the registers.
+///////////////////////////////////////////////////////////////////////////
+
+
+== Le moniteur ==
+
+
+Dès que l'on a accédé à DAMS, le moniteur prend le contrôle et attend une des commandes.
+Celles-ci peuvent être tapées en majuscule ou en minuscule.
+
+NOTE: Depuis DAMS  1.1 le curseur du mode moniteur est  "_"
+afin de le distinguer du mode éditeur.
+
+
+=== <CAPS LOCK>
+
+Passe de majuscule à minuscule et inversement.
+
+DAMS accepte indifféremment les majuscules et les minuscules.
+L'assembleur accepte aussi les minuscules.
+
+
+=== <CTRL> R
+
+Fait basculer l'indicateur de haut de page sur LRAM ou ROM.
+
+* LRAM signifie que de 0 à #3FFF, il y a de la RAM
+* ROM signifie que de 0 à #3FFF, il y a de la ROM
+
+Vérifiez bien que l'indicateur est bien positionné avant toute commande telle que `D`, `H`, `K`, `T`, `R`, `J$` etc...
+
+
+=== <CTRL> E
+
+Fait basculer l'indicateur de haut de page sur URAM ou EXT:n
+
+* URAM signifie que de #C000 à #FFFF, il y a de la RAM
+* EXT:n signifie que la même zone est occupée par la ROM numéro n. (Voir commande `E`).
+
+Comme pour la commande `<CTRL> R`, vérifiez bien cet indicateur.
+
+
+=== <CTRL> B
+
+Bascule la base d'affichage.
+
+Tous les nombres affiché par DAMS seront dans la base (10 ou 16) sélectionnée par `<CTRL> B`.
+
+
+=== Ls
+
+Permet d'accéder à l'éditeur au chapitre du texte spécifié par la chaîne "s".
+"s" doit être un label du texte.
+
+Dès que les caractères de "s" correspondent aux premiers caractères du label, le texte est affiché.
+
+* Si la chaîne "s" est un ";", le texte est affiché à partir du début.
+* Si la chaîne "s" est nulle le texte est affiché à partir de la dernière position du curseur ">".
+* Si l'imprimante a été sélectionnée (`<CTRL> P`) alors le texte est transmis à l'imprimante.
+* Si la chaîne "s" n'est pas trouvée dans le texte alors la commande n'a pas d'effet.
+
+
+=== N
+
+Elimine le fichier texte et la table des symboles.
+
+Pour ressusciter un fichier texte effacé par un new malencontreux,
+poker 59 dans l'adresse de "Text" (donnée par la commande `X`).
+
+
+=== Xn
+
+`Xl` affiche une table de symboles (créée par un assemblage).
+
+Elle peut être imprimée si auparavant l'imprimante a été sélectionnée.
+
+`X0` ou `X` donne différentes adresses occupées par DAMS:
+
+Text:: c'est l'adresse du 1er octet du fichier texte.
+End:: c'est l'adresse du dernier octet du fichier texte.
+Hmem:: c'est l'adresse du dernier octet occupé par DAMS (Voir commande `M`).
+
+
+=== O Expression Numérique
+
+Évalue l'expression et affiche le résultat.
+
+Tous les types de nombres et d'opérateurs décrits dans ce manuel peuvent être utilisés.
+
+Si une table de symboles existe, des labels peuvent figurer dans l'expression numérique.
+
+------------------------------------------------------
+O 3+2
+=5
+------------------------------------------------------
+
+=== B
+
+Retour au basic
+
+
+=== Qnn,n
+
+Poke la valeur "n" à l'adresse "nn".
+
+Si "nn" est occupée par DAMS, l'erreur 12 est lancée.
+
+"n" et "nn" peuvent être des expressions numériques.
+
+
+=== Wnn1,nn2
+
+Même effet que "Q" mais sur 2 octets.
+
+
+=== Mnn
+
+Fixe la dernière adresse mémoire occupée par DAMS (Hmem).
+
+Toute la zone mémoire comprise entre l'adresse de début de DAMS et Hmem est exclusivement réservée à DAMS.
+
+Toute commande telle que `Q`, `W`, `A`... qui tente de modifier un octet de mémoire occupé par DAMS,
+est clôturée par l'erreur 12.
+
+La valeur de Hmem est visualisée par la commande `X`.
+
+Plus la valeur Hmem sera basse et moindre sera l'espace réservé au fichier texte et inversement.
+Toutefois, la valeur de Hmem devra se situer dans la Ram centrale de 32 K.
+
+Vous pouvez essayer différentes valeurs pour "nn".
+Si cette valeur est trop basse l'erreur 12 est lancée, si elle est trop haute c'est l'erreur 8.
+
+NOTE: Cette commande détruit la table des symboles.
+
+
+=== Pn,s
+
+Sauvegarde le fichier ayant pour nom la chaîne "s".
+
+* 0 : Sauve le fichier texte
+
+* 1 : Sauve le fichier texte, à partir de la dernière position du curseur ">".
+
+* 2 : Après un assemblage, sauve le code objet.
+
+
+=== P3,a,n,s
+
+
+(Expérimental, depuis DAMS 1.1)
+
+Sauvegarde la zone mémoire a l'adresse "a", de longueur "n", dans le
+fichier nommé "s".
+Est l'équivalent du basic:
+
+                              SAVE "nom de fichier",B, adresse, longueur.
+
+
+=== Gn,s
+
+Si "n" est omis ou nul,
+charge le fichier source DAMS ayant comme nom la chaîne "s".
+
+NOTE: Le fichier texte est toujours chargé à la suite de celui déjà existant (s'il y en a un).
+
+
+Si "n" est spécifié (Expérimental, depuis DAMS 1.1)
+alors cette commande est l'équivalent du basic:
+
+                              LOAD "nom de fichier", adresse
+
+
+=== Sn,s
+
+DAMS possède en mémoire 2 chaînes de 16 caractères utilisées par l'éditeur.
+(Voir commande `<COPY>` de l'éditeur).
+
+"n" spécifie la chaîne concernée (1 ou 2) et "s" est la nouvelle chaîne.
+
+Si "n" est égal à 0, le contenu des chaînes est tout simplement affiché.
+
+La chaîne "l" est la chaîne de recherche, et la chaîne 2 est la chaîne de substitution.
+
+Lors de la saisie, ces 2 chaînes sont analysées comme des phrases du fichier texte,
+car c'est avec lui qu'elles sont en relation.
+Donc, un mnémonique doit être précédé d'un espace,
+et une chaîne qui n'est ni un mnémonique ni un label doit être précédée de 2 espaces.
+
+Après chaque commande `S` le contenu des 2 chaînes est affiché de manière à voir s'il a été accepté
+(et si les chaînes peuvent donc se trouver dans le fichier texte).
+
+
+=== An,s
+
+Assemble le fichier texte avec l'option "n" et "s" comme nom du 1er bloc.
+
+Ces 2 arguments ne sont pas obligatoires. (Voir assembleur)
+
+
+=== Fn,s
+
+Assemble le fichier texte qui se trouve sur support magnétique
+avec l'option "n" et dont le 1er bloc a pour nom la chaîne "s".
+
+
+=== Dnn
+
+Désassemble pas à pas à partir de l'adresse "nn".
+
+Si l'imprimante est sélectionnée, DAMS demande l'adresse de fin.
+
+La touche `Q` ou `<CTRL> C` arrête le désassemblage.
+
+Toute autre touche continue le désassemblage instruction par instruction.
+
+
+=== Knn
+
+Liste la mémoire à partir de l'adresse "nn".
+
+Le bit 7 des caractères affichés a été remis à 0.
+
+`Q` ou `<CTRL> C` clôture le listage.
+
+
+=== Tnn
+
+Dans un premier temps, affiche le contenu des registres, puis trace pas à pas (voir trace).
+
+`Q` ou `<CTRL> C` revient au moniteur.
+
+
+=== Rnn
+
+Trace en mode rapide à partir de l'adresse "nn" (voir trace).
+
+`<CTRL> C` ramène au mode Trace.
+
+
+=== Jnn
+
+Exécute le programme à l'adresse "nn".
+
+Après un assemblage, si un "ENT" se trouvait dans le texte,
+la commande `J` sans argument exécute le programme à l'adresse déclarée dans le "ENT".
+
+Si "nn" existe le programme est lancé en RAM.
+
+Indifféremment des indicateurs, le registre BC' prend la valeur #7F8E et F' est remis à 0.
+
+Il est possible de transmettre une autre valeur dans les registres BC' et F' à un programme en RAM en faisant `J$-$+nn`.
+(voir la commande `J$` dans le paragraphe Trace).
+
+
+=== !nn
+
+(Expérimental, depuis DAMS 1.1)
+
+Installe un point d'arrêt à l'adresse "nn".
+
+Lorsqu'il est atteint, le moniteur de DAMS reprend la main.
+On peut alors rentrer en mode trace (commande `T`).
+
+NOTE: Une fois atteint le point d'arrêt est automatiquement supprimé.
+
+
+=== . (point)
+
+Permet de modifier le contenu des registres du processeur.
+
+Peut être utile avant de lancer un programme (avec `J` ou `R`) ou au cours d'une trace.
+
+Exemples:
+
+* `.BC,2` :	Charge BC avec la valeur 2
+
+* `..BC,2` :	Charge B avec la valeur 2
+
+* `...BC,2` :	Charge C avec la valeur 2
+
+* +.BC',#7F8E+ : Charge BC' avec la valeur #7F8E
+
+
+=== Hnn
+
+Cette commande désassemble la mémoire à partir de l'adresse "nn" et inclue au fichier texte
+à partir de la dernière position du curseur ">", le texte du désassemblage.
+
+Le désassemblage se fait en 2 passes de manière à créer une table de symboles.
+
+NOTE: La mémoire écran est obligatoirement utilisée.
+
+Après `Hnn`, DAMS demande :
+
+	Text ?
+
+Tous les octets qui suivront l'adresse que vous donnerez seront inclus au fichier texte sous forme de "DEFB".
+
+Ensuite DAMS demande :
+
+	Code ?
+
+S'il y a de nouveau du langage machine après les "DEFB" alors rentrez l'adresse et ainsi de suite.
+
+Si vous ne répondez pas à ces questions en appuyant sur <ENTER> alors DAMS vous demande l'adresse de fin.
+
+
+=== En
+
+Lorsque l'indicateur URAM est sur EXT, la ROM concernée est fixée par la commande `E`.
+
+"n" doit être compris entre 0 et 251.
+
+0 fixe la ROM basic et 7 fixe la ROM du lecteur de disquette.
+
+
+
+== L'éditeur ==
+
+
+On y accède par la commande `L` du moniteur.
+
+Il permet de créer, modifier, ajouter, effacer et dupliquer du texte qui sera soumis à l'assembleur.
+
+Dans cet éditeur 2 modes sont à considérer:
+
+- le premier, celui auquel on accède grâce à la commande `L` permet les commandes générales.
+- Le second permet la saisie du texte.
+
+
+=== Les commandes générales ===
+
+
+Elles permettent de naviguer dans le source.
+
+
+==== <SHIFT> ←
+
+WARNING: Changement depuis DAMS 1.1, avec DAMS 1.0 il n'y avait pas besoin de <SHIFT>.
+
+Accède au 2ième mode d'édition:
+Il permet la saisie du texte à partir de la ligne pointée par le curseur ">".
+
+Après chaque retour chariot, une nouvelle ligne est attendue.
+
+Un retour chariot dans une ligne vide permet de sortir de ce mode.
+
+
+==== →
+
+Permet de corriger la ligne pointée par le curseur ">".
+
+Un retour chariot termine la correction.
+
+Si à ce moment là la ligne est vide, alors aucune modification n'est portée
+sur la ligne et l'ancienne ligne est affichée.
+
+
+==== ↑
+
+Fait monter le curseur ">" d'une ligne ou descend le texte si le curseur ">" est en haut.
+
+
+==== <SHIFT> ↑
+
+Page précédente (depuis DAMS 1.1).
+Fait monter le curseur de 24 lignes en arrière dans le texte.
+
+
+==== ↓
+
+Descend le curseur ">" d'une ligne ou monte le texte si le curseur est déjà en bas.
+
+
+==== <SHIFT> ↓
+
+Page suivante (depuis DAMS 1.1).
+Déplace le curseur de 24 lignes en avant dans le texte.
+
+
+==== <DEL>
+
+Efface la ligne pointée par le curseur ">".
+
+
+==== <COPY>
+
+Recherche la chaîne de caractères S1 (définie par la commande `S` du moniteur) à partir de la position du curseur ">".
+
+Si la chaîne "S1" est trouvée,
+la page de texte où elle se trouve est affichée et la ligne est pointée par le curseur "$".
+
+A ce moment là,
+la touche "S" permet de remplacer la chaîne "S1" du texte par la chaîne "S2"
+(définie elle aussi par la commande `S` du moniteur).
+
+Ensuite la nouvelle phrase est affichée et la recherche de la chaîne "S1" se poursuit.
+
+Si la chaîne "S2" du moniteur, substituée à la chaîne "S1" du texte a donné une phrase incorrecte,
+la recherche ne se poursuivra qu'après que la phrase ait été corrigée.
+
+Toute autre touche que `S` appuyée quand le curseur "$" est affiché fera réapparaître le curseur ">".
+
+Les trois commandes suivantes utilisent des pointeurs de texte matérialisés par le caractère "@".
+Ils doivent être les premiers et uniques caractères d'une ligne. L'assembleur les ignore.
+
+
+==== <CTRL> D
+
+Efface tout le texte compris entre les 2 premiers pointeurs de texte qui sont eux même effacés.
+
+
+==== <CTRL> C
+
+Duplique le texte se trouvant entre les premiers pointeurs de texte à la position actuelle du curseur ">".
+
+Les pointeurs de texte ne sont pas dupliqués.
+
+
+==== <CTRL> K
+
+Détruit tous les pointeurs de texte.
+
+
+=== Les commandes de saisie du texte ===
+
+Ce sont les commandes utilisables en mode édition de ligne.
+
+==== <DEL>
+
+Efface le caractère avant le curseur.
+
+
+==== →
+
+Avance le curseur d'un caractère.
+
+
+==== <SHIFT> →
+
+Avance rapide (depuis DAMS 1.1).
+Déplace le curseur de 5 caractères en avant dans la ligne.
+
+
+==== ←
+
+Recule le curseur d'un caractère.
+
+
+==== <SHIFT> ←
+
+Retour rapide (depuis DAMS 1.1).
+Déplace le curseur de 5 caractères en arrière dans la ligne.
+
+
+
+=== Mode de travail de l'éditeur ===
+
+
+Il accepte des phrases de 80 caractères qui sont divisées en plusieurs zones :
+
+LABELS  MNEMONIQUES  OPERANDES  COMMENTAIRES
+
+ex :
+
+...............................................................................
+LOOP  ADD A,(HL)	; additionne à A la valeur de (HL)
+...............................................................................
+
+Un label doit être écrit en début de ligne,
+commencer par un caractère alphabétique et ne pas être le nom d'un registre.
+
+Sa longueur maximale ne doit pas excéder 8 caractères.
+
+Un mnémonique doit toujours être précédé d'un espace.
+
+NOTE: Depuis DAMS 1.1, cet espace peut être omis.
+
+La longueur maximale des opérandes est de 26 caractères.
+
+Après chaque retour chariot,
+l'éditeur fait une analyse de la phrase au cours de laquelle il supprime les espaces inutiles
+et transforme les mots en codes.
+Ceci permet de réduire considérablement la taille du fichier texte et d'accélérer l'assemblage.
+
+Si une phrase n'est pas correcte, l'éditeur renvoie le curseur dans la zone erronée.
+
+
+=== Échanges de fichier texte ===
+
+
+Pour assembler avec DAMS un fichier texte crée par en autre éditeur,
+il est nécessaire d'adapter ce fichier au format de DAMS.
+
+L'exemple suivant montre comment, de façon générale, est codée une ligne.
+
+............................................................
+Ex :    LOOP
+LD HL, (LOOP + 5 )
+L O O P
+LD
+H L , ( L O O P + 5 )
+4C 4F 4F 50
+80
+48 4C 2C 28 4C 4F 4F 50 2B 35 29 0D
+............................................................
+
+
+#0D est le caractère de fin de ligne et zéro est le caractère de fin de texte.
+
+Les mnémoniques du Z80 sont codés sur 1 octet d'après une table se trouvant à l'adresse de TEXT-242.
+
+Le premier mnémonique de cette table est "LD" dont le code est #80 et le dernier est la pseudo-instruction d'assemblage "END'' qui a pour code #CC.
+
+Le bit 7 du dernier caractère de chaque mnémonique est mis à 1 pour signaler la fin de mot.
+
+#FF est le code du ";" (commentaire) et peut être suivi par une chaîne de caractères alphanumériques.
+
+
+NOTE: Voir damsdecode, un outil du projet DAMS écrit en C++ qui permet d'encoder/décoder les fichier DAMS.
+
+
+
+== L'assembleur ==
+
+
+Les commandes `A` et `F` du moniteur permettent d'assembler le fichier texte.
+
+Cette opération consiste à lire le fichier texte (créé avec l'éditeur) qui constitue le programme
+source et à le transformer en une suite de codes (programme objet)
+qui pourront être directement exécutés par le microprocesseur.
+
+L'assemblage se fait en deux passes, le texte est examiné deux fois de suite.
+
+L'argument "s" des commandes `A` et `F` signale que le texte est organisé en blocs et qu'il est sur support magnétique.
+"s" est le nom du premier bloc.
+
+La commande `A` signifie que le 1er bloc est déjà en mémoire et qu'il est inutile de le charger.
+Il doit aussi se trouver sur support magnétique pour la 2ième passe.
+
+La commande `F` signifie que le 1er bloc n'est pas en mémoire et qu'il faut donc le charger.
+
+
+=== Les options ===
+
+
+L'argument "n" des commandes `A` et `F` définit les options choisies.
+
+Ces options peuvent pour la plupart être sélectionnées en même temps en les additionnant.
+
+
+==== Option 1
+
+Indique à l'assembleur qu'il doit utiliser la mémoire écran de 16 Ko pour y loger la table des symboles.
+Ceci est utile lorsque la taille du fichier texte est très importante ou lorsque DAMS est exécuté à une adresse haute.
+
+Si la mémoire écran ne suffisait pas à loger tous les labels, l'assemblage serait stoppé par l'erreur 9.
+
+NOTE: Quand cette option est sélectionnée, le premier label absent arrête l'assemblage.
+
+
+==== Option 2
+
+Indique à l'assembleur qu'il doit déposer le code objet à la suite de la table des symboles ou si l'option 1
+est aussi sélectionnée, à la suite de l'adresse Hmem donnée par la commande `X`.
+
+Toutefois, le texte sera assemblé pour être exécuté à l'adresse donnée par le "ORG" figurant dans le texte.
+
+NOTE: Lorsque l'on a accédé à l'assemblage par la commande `F`, l'option 2 est obligatoirement sélectionnée.
+Dans ce cas, l'assembleur demande à quelle adresse il doit déposer le code objet.
+
+
+==== Option 4
+
+(Expérimental, depuis DAMS 1.1)
+
+Elle provoque une liste pendant la deuxième passe de l'assemblage.
+
+Si la ligne du texte qui  est  en  cours d'assemblage  génère  du code,
+alors l'adresse de ces codes est affichée
+(dans la base sélectionnée par `<CTRL> B`), suivie des
+codes générés et du texte source.
+
+Si  la ligne du texte ne génère pas de codes, (par
+exemple  un  commentaire ou un label) alors seulement la ligne de
+texte est affichée.
+
+NOTE: Cette  liste  peut être imprimée si l'imprimante a
+été sélectionnée par `<CTRL> P`.
+
+Si  la  sortie  se  fait  sur écran, alors il faut
+appuyer sur une touche pour assembler la ligne suivante.
+
+L'option  1 est prioritaire et annule cette option
+sauf si le texte est imprimé.
+
+
+==== Option 8
+
+(Expérimental, depuis DAMS 1.1)
+
+L'option  8 permet de déposer le code objet sur la
+disquette  pendant  l'assemblage,  et  libère ainsi de la mémoire
+pour stocker des blocs de textes ou la table des symboles.
+Néanmoins,  une  zone  de  2Ko  est nécessaire comme
+tampon  de  sortie.  DAMS calcule l'adresse de cette zone sauf
+si  l'assemblage  doit  se  faire  par  blocs.  Dans  ce  cas, la
+question :
+
+                              Object code address ?
+
+Sert  à  déterminer l'adresse du tampon de sortie.
+Plus  l'adresse  de ce tampon sera haute et plus il y aura de place
+pour loger la table des symboles ou du texte.
+
+Cette  adresse  devra  être  inférieure d'au moins
+2070  octets  à  la  valeur  de  HRAM car à la suite du tampon de
+sortie  se  trouve  le  tampon  de l'assembleur qui doit être d'au
+moins  20 octets ou aussi grand que le plus grand "DEFS" du fichier
+texte.
+
+Le   fichier   généré  est  un  fichier  ASCII  de
+caractères  hexadécimaux dans lequel 2 caractères correspondent à
+1 code machine.
+L'instruction basic :
+
+                              INPUT #9,a$
+
+Va   lire   32   caractères  qui  groupés  par  2
+correspondent à 16 codes machines.
+
+Pour  recharger  ces  codes machines en mémoire il
+faut utiliser la nouvelle commande du moniteur :
+
+                      G adresse,nom fichier
+
+A  la fin, le nombre d'octets chargé est affiché.
+Si  le  fichier  n'est  pas de type ASCII, alors il est chargé en
+mémoire comme fichier binaire.
+
+Pour  sauvegarder cette zone mémoire comme fichier
+binaire, il faut utiliser la nouvelle commande du moniteur :
+
+                      P3,adresse,longueur,nom fichier
+
+
+
+
+==== Option 128
+
+Cette option n'existe que dans la version "développeur" de DAMS.
+Elle permet de générer pendant l'assemblage une table de relogement
+déposée en fin de code, et utilisée par DAMS lui-même à son
+démarrage afin de se reloger dynamiquement.
+
+Typiquement, DAMS est généré par lui-même par:
+
+	F128,D1.BIN
+
+Cette caractéristique est propre à DAMS lui-même et n'a pas été
+conçue pour un usage utilisateur.
+
+
+=== La table des symboles ===
+
+
+C'est la table qui contient les labels et leurs valeurs.
+
+Elle est créée au cours de la 1ière passe de l'assemblage et elle se trouve à l'adresse de Hmem
+ou à #C000 si l'option 1 est sélectionnée.
+
+Après un assemblage, elle est encore utilisable et peut être visualisée (et imprimée) par la commande `X1`.
+Si l'option 1 est sélectionnée, elle est détruite à la fin de l'assemblage.
+
+Au cours de sa création,
+si elle tentait de surcharger le code objet ou de dépasser HRAM elle serait alors
+immédiatement recopiée dans la mémoire écran de manière à ne pas stopper l'assemblage.
+
+
+=== Pseudo-instructions  ===
+
+
+Outre le langage d'assemblage standard du Z80, DAMS accepte les commandes d'assemblage suivantes.
+Elles doivent être entrées comme des mnémoniques et non comme des labels.
+
+
+==== ORG nn
+
+Définit l'origine ou l'adresse à laquelle devra être assemblé le texte.
+
+Si l'option 2 est sélectionnée, ORG ne sert qu'à donner une valeur aux labels.
+
+Si ORG est omis ou si l'option 2 est sélectionnée DAMS affiche l'adresse où il dépose le code objet.
+
+
+==== Label EQU nn
+
+Le symbole "Label" prend la valeur "nn", "nn" doit être une constante ou un label déjà défini.
+
+
+==== DEFB n1, n2, n3...
+
+Chaque octet de mémoire prend la valeur "n".
+
+
+==== DEFW nn1, nn2, nn3...
+
+Chaque groupe de 2 octets prend la valeur "nn".
+
+
+==== DEFS nn, n
+
+Saute "nn" octets. Si "n" est présent, alors les "nn" octets sont remplis par la valeur "n".
+
+
+==== DEFM s
+
+Les octets suivants sont remplis par la chaîne "s".
+
+
+==== ENT nn
+
+Signale à la commande `J` du moniteur que le point d'entrée du programme sera l'adresse "nn".
+
+
+==== IF expression
+
+Évalue l'expression.
+
+Si l'expression est égale à 0, alors l'assemblage est invalidé jusqu'à l'apparition d'un `ELSE` ou d'un `END`.
+
+
+==== ELSE
+
+Valide ou invalide l'assemblage.
+
+
+==== END
+
+Valide l'assemblage des lignes qui suivent.
+
+
+
+=== L'assemblage par blocs ===
+
+
+Lorsque le fichier texte dépasse une dimension de 20 Ko,
+il devient nécessaire de le découper en blocs pour l'assembler,
+sinon il n'y a plus assez de mémoire pour contenir le code objet et la table des symboles.
+
+NOTE: Un lecteur de disquette est presque indispensable pour l'assemblage par blocs,
+car chaque bloc doit être chargé 2 fois, une par passe.
+
+Chaque bloc à assembler doit se terminer par la commande d'assemblage `*F,s`
+la chaîne "s" étant le nom du bloc suivant.
+
+Cette commande d'assemblage doit être frappée en zone label et doit être la seule instruction de la ligne.
+
+Le dernier bloc ne doit pas comporter cette commande d'assemblage.
+
+
+=== Les expressions ===
+
+
+Les expressions sur lesquelles DAMS travaille doivent être une suite de termes séparés par des opérateurs.
+
+Les termes et les opérateurs acceptés par DAMS sont les suivants :
+
+
+[width="40%"]
+.Termes
+|=====================================================
+|+12+		| Constante numérique décimale.
+|+#20+		| Constante numérique hexadécimale.
+|+%10110+	| Constante numérique binaire.
+|+"a"+		| Constante numérique code ASCII du caractère "a".
+|+VALEUR+	| Étant un label auquel un assemblage a donné une valeur.
+|+$+		| Représente la valeur actuelle du compteur d'adresse.
+|+:x+		| Donne le contenu de l'octet adressé par x (PEEK).
+|+::x+		| Donne le contenu des 2 octets adressés par x (DEEK).
+|=====================================================
+
+
+[width="40%"]
+.Opérateurs
+|=====================================================
+| `+`		| addition
+| +-+		| soustraction
+| +*+		| multiplication
+| +/+		| division
+| +&+		| élément logique ET
+| +@+		| élément logique OU
+| +!+		| élément logique OU exclusif
+| +?+		| fonction modulo
+|=====================================================
+
+
+
+=== Les erreurs d'assemblage ===
+
+
+Dès que DAMS rencontre une erreur il stoppe l'assemblage et affiche un message d'erreur.
+
+Accédez à l'éditeur par un `L` et la ligne pointée par le curseur ">" est la ligne où est advenue l'erreur.
+
+Si l'option 1 n'est pas utilisée, un label absent ne stoppe pas l'assemblage et est simplement signalé.
+
+
+== La trace ==
+
+
+Elle permet d'exécuter un programme instruction par instruction et de visualiser
+le contenu des registres du processeur après chaque instruction.
+
+C'est un moyen efficace pour trouver des erreurs dans un programme en langage machine.
+
+
+=== La commande "T" ===
+
+
+Lorsque vous entrez `T`, le contenu des registres et les 16 premiers octets de pile sont affichés.
+
+Vous pouvez appuyer sur `Q` ou `<CTRL> C` pour revenir au moniteur.
+
+Si vous appuyez sur une autre touche, l'instruction adressée par le registre PC est désassemblée,
+exécutée, et le contenu des registres est à nouveau affiché.
+Ainsi, instruction après instruction, vous pouvez voir si votre routine a l'effet souhaité.
+
+Avant d'être exécutée, chaque instruction est testée afin d'éviter la destruction de DAMS.
+Toute tentative de modification de la zone de mémoire comprise entre l'adresse de début de DAMS et Hmem,
+entraîne l'erreur 12.
+
+Les instructions qui modifient la configuration RAM/ROM modifient aussi les indicateurs de haut de page.
+
+Au cours d'une trace, vous pouvez revenir au moniteur pour, par exemple,
+modifier une valeur dans un registre et continuer de tracer en rentrant `T`;
+mais si vous avez utilisé une commande qui modifie le compteur d 'adresse, comme `D`, `A`, `K`, `H`,
+il faudra continuer de tracer en rentrant `Tnn`, "nn" étant l'adresse où vous aviez interrompu le traçage.
+
+
+=== La commande "R" ===
+
+
+Permet de tracer en mode rapide.
+
+Le désassemblage et le contenu des registres ne sont pas affichés mais les instructions
+sont testées avant d'être exécutées.
+
+Lorsque vous entrez cette commande,
+DAMS mémorise la valeur du registre SP et le retour au mode "trace normale" se fera lorsque
+le registre SP aura la valeur mémorisée plus 2,
+c'est-à-dire, lorsqu'il aura exécuté un "RET" ou un "POP" etc...
+
+La commande `R` n'est donc pas critique et peut être lancée dans de nombreux cas sans danger.
+
+Si `R` ne revenait pas, (par exemple le programme boucle),
+`<CTRL> C` permettrait de le stopper et de revenir au mode "trace normal".
+
+
+=== La commande "J" ===
+
+
+`J` permet d'exécuter une routine en langage machine en mémoire RAM.
+
+`J$` exécute une routine à l'adresse que contient le PC, et dans ce cas,
+"$" indique que la routine se trouve en ROM ou en RAM suivant les indicateurs
+de haut de page et la valeur du registre PC.
+
+`J$` ne modifie pas la valeur des registres BC' et AF'.
+Pendant une trace il est donc préférable d'utiliser `J$`.
+
+Avant d'exécuter une commande `J`, s'assurer que le registre SP a une valeur comprise dans les 32 Ko centraux de RAM.
+
+Attention! `R` peut être exécuté à n'importe quel endroit d'une routine,
+mais `J` doit être exécuté au début d'une routine qui n'a pas d'erreur.
+
+
+== Messages d'erreur ==
+
+
+L'affichage d'un message d'erreur provoque le retour au moniteur.
+
+Voici la liste des messages d'erreurs et des cas dans lesquels ils peuvent apparaître :
+
+
+=== 0: Syntax Error
+
+Une commande n'a pas été reconnue ou sa syntaxe est erronée.
+
+Au cours d'un assemblage, une ligne est erronée.
+
+
+=== 1: Redefine label Error
+
+Au cours d'un assemblage,
+un label porte déjà le même nom et un label ne peut avoir 2 valeurs.
+
+
+=== 2: Relative number Error
+
+Le déplacement relatif d'un JR ou l'index d'un registre IX ou IY a une valeur hors intervalle.
+
+
+=== 3: Integer out of range Error
+
+Cette erreur se produit dans tous les cas où devrait figurer un nombre compris
+dans les intervalles 0, +255 ou 0, +65535 et vous n'avez pas respecté cet intervalle.
+
+
+=== 4: Illegal character Error
+
+Au cours d'un assemblage, un caractère d'un label ou de la ligne est illégal.
+
+
+=== 5: Illegal reference Error
+
+Au cours d'un assemblage :
+
+- Une expression qui suit un "EQU", un "ORG" ou un "DEFS", comporte un label qui n'a pas été défini.
+- Il a été trouvé la commande d'assemblage "*F,s" alors que le fichier texte n'est pas assemblé par bloc.
+
+
+=== 6: Bad ORG Error
+
+Au cours d'un assemblage :
+
+- La valeur qui suit le "ORG" est une adresse occupée par DAMS.
+- L'adresse d'origine est inférieure à DAMS mais l'ampleur du code objet a tenté de surcharger DAMS.
+
+
+=== 7: I/O Error
+
+Clôture toute opération avec un périphérique qui a échoué.
+
+
+=== 8: Bad memory Error
+
+Lors du chargement d'une source :
+La taille du fichier texte que vous essayez de charger est supérieure à la taille de mémoire actuelle (commande `M`).
+
+Sous l'éditeur :
+Il n'y a plus de place pour rajouter cette ligne.
+Vous pouvez peut être faire de la place avec la commande `M`.
+
+Pendant un assemblage :
+Le code objet a tenté de dépasser la limite supérieure de la mémoire (HRAM).
+Pour y remédier, réassemblez avec l'option 1 ou rechargez DAMS à une adresse plus basse ou modifiez HRAM.
+
+
+=== 9: No Table space Error
+
+Au cours d'un assemblage :
+L'option 1 a été sélectionnée et la table de symboles nécessite plus de 16 Ko.
+
+
+=== 10: Break Error
+
+Vous avez interrompu une opération.
+
+
+=== 11: Label absent Error
+
+Cette erreur ne se produit jamais au cours d'un assemblage mais lorsque vous entrez une
+commande dont une expression contient un label qui n'est pas dans la table des symboles.
+
+
+=== 12: Bad location Error
+
+Une commande telle que `Q` ou `W` a tenté de modifier un octet occupé par DAMS.
+
+Au cours d'une trace, (commande `T` ou `R`), une instruction telle que "LD (HL),a",
+"LDDR" etc... aurait détruit ou compromis DAMS.
+
+L'argument de la commande `M` est trop bas.
+
+
+== Exemple d'utilisation ==
+
+
+Vous venez de charger DAMS, le fichier texte est vide, le moniteur attend une commande.
+
+Entrez `L`,  puis `<SHIFT> <-` et tapez le programme suivant :
+
+
+----------------------------------------------------------------------------
+;
+	ORG 40000	; le programme sera logé à l'adresse 40000
+DEBUT
+	ENT $
+;
+	LD A,"A"
+	LD B,26
+LOOP
+	CALL #BB5A	; Affiche le cc contenu dans A
+	INC A
+	DJNZ LOOP	; Boucle 26 fois
+	RET
+FIN
+----------------------------------------------------------------------------
+
+
+Assemblez-le :	`A`
+
+Exécutez-le :	`J`
+
+Désassemblez-le : `D DEBUT`
+
+Tracez-le : `T DEBUT`
+
+
+Appuyez sur <ENTER> jusqu'à ce que le PC affiche #BB5A.
+
+A ce moment là, si vous avez le temps,
+continuez à appuyer sur <ENTER> et vous allez tracer la routine de la ROM qui affiche un caractère à l'écran,
+sinon, appuyez sur la touche "Q" et puis `R`.
+
+Faites 2 ou 3 fois le tour de la boucle de cette façon, puis après le "INC A" tapez "Q" et `R`.
+
+La boucle va alors se tracer seule jusqu'à ce que le registre B soit égal à zéro.
+
+A ce moment là, le contenu des registres s'affiche et le PC a pris la valeur qui était
+au sommet de la pile avant de tracer la routine.
+
+Le "RET" a donc été exécuté. Pour revenir au moniteur, tapez "Q".
+
+Entrer maintenant : `H DEBUT`
+
+DAMS demande : Text ? tapez <ENTER>
+
+DAMS demande : End ? Entrez "FIN"
+
+Aussitôt vous vous retrouvez dans l'éditeur et vous pouvez constater que les codes machines
+ont été désassemblés et inclus au texte,
+à partir de la dernière position du curseur ">".
+
+Un label a aussi été créé.
+
+Un label commençant par un "R" est une adresse à laquelle aboutit un saut relatif.
+
+Si un label occupe une ligne à lui seul c'est que plusieurs sauts relatifs aboutissent à cette adresse.
+
+Une adresse appelée par un "CALL" ou un "JMP" engendre une ligne commentaire vide et un label commençant par un "W".
