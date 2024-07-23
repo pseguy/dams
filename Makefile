@@ -5,7 +5,7 @@
 
 CXXFLAGS= -g -Wall
 
-all: damsdecode damsman-fr.html
+all: damsdecode damsman-fr.html damsman-fr.html
 
 
 
@@ -29,6 +29,9 @@ dams.dsk: D1.BIN D2.BIN D3.BIN DAMS.BAS DAMS.BIN
 damsman-fr.html: damsman-fr.adoc
 	asciidoc --unsafe --attribute=sgml -a icons damsman-fr.adoc
 
+damsman-en.html: damsman-en.adoc
+	asciidoc --unsafe --attribute=sgml -a icons damsman-en.adoc
+
 clean:
 	rm -f damsdecode
 
@@ -36,3 +39,4 @@ clobber: clean
 	rm -f D1.BIN D2.BIN D3.BIN
 	rm -f dams.dsk
 	rm -f damsman-fr.html
+	rm -f damsman-en.html
